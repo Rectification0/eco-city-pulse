@@ -26,5 +26,5 @@ prophet>=1.1,<2.0
 shap>=0.46,<1.0
 
 # --- Tests ---
-pytest>=8.3,<9.0
+pytest>=8.3,<10.0                  # 9.x is current; the suite runs on both
 httpx>=0.27,<1.0                   # FastAPI TestClient transport

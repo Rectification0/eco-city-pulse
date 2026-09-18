@@ -4,4 +4,7 @@
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+markers = [
+    "db: needs a reachable PostgreSQL; skipped automatically when none answers",
+]
 filterwarnings = ["error::DeprecationWarning:api.*", "error::DeprecationWarning:core.*"]

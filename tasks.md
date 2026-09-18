@@ -32,15 +32,15 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 1.1 | Enable PostGIS extension in DB init script | design §6.1 | M | [ ] |
-| 1.2 | Define `data_sources` table/model — `id, name, api_url, status, last_run` | specs §9 | M | [ ] |
-| 1.3 | Define `observations` table/model — `id, source_id, timestamp, lat, lon, pm25, pm10, temp, humidity, traffic_score, is_anomaly` | specs §9 | M | [ ] |
-| 1.4 | Define `models` table/model — `id, name, target, features_used, mae, rmse, r2, created_at, artifact_path` | specs §9 | M | [ ] |
-| 1.5 | Define `predictions` table/model — `id, model_id, target_time, predicted_value, actual_value` | specs §9 | M | [ ] |
-| 1.6 | Migrations (Alembic) + composite index on `observations(timestamp, lat, lon)` | design §6.1 | M | [ ] |
-| 1.7 | `api/dependencies.py` — DB session dependency and settings injection | design §5 | M | [ ] |
-| 1.8 | Load city-district **GeoJSON** into `data/raw/` and expose it to the API | specs §5.1 | S | [ ] |
-| 1.9 | Seed script producing the **Demo mode** dataset (offline historical air quality + weather + synthetic traffic) | DR-1, AC-2 | M | [ ] |
+| 1.1 | Enable PostGIS extension in DB init script | design §6.1 | M | [x] |
+| 1.2 | Define `data_sources` table/model — `id, name, api_url, status, last_run` | specs §9 | M | [x] |
+| 1.3 | Define `observations` table/model — `id, source_id, timestamp, lat, lon, pm25, pm10, temp, humidity, traffic_score, is_anomaly` | specs §9 | M | [x] |
+| 1.4 | Define `models` table/model — `id, name, target, features_used, mae, rmse, r2, created_at, artifact_path` | specs §9 | M | [x] |
+| 1.5 | Define `predictions` table/model — `id, model_id, target_time, predicted_value, actual_value` | specs §9 | M | [x] |
+| 1.6 | Migrations (Alembic) + composite index on `observations(timestamp, lat, lon)` | design §6.1 | M | [x] |
+| 1.7 | `api/dependencies.py` — DB session dependency and settings injection | design §5 | M | [x] |
+| 1.8 | Load city-district **GeoJSON** into `data/raw/` and expose it to the API | specs §5.1 | S | [x] |
+| 1.9 | Seed script producing the **Demo mode** dataset (offline historical air quality + weather + synthetic traffic) | DR-1, AC-2 | M | [x] |
 
 **Exit criteria:** all four tables exist with constraints and indexes; demo seed loads without a network connection.
 

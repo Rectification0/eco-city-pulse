@@ -9,9 +9,10 @@ phases add their routers here:
 
 from fastapi import APIRouter
 
-from api.routes import health
+from api.routes import data, health
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(health.router)
+api_v1_router.include_router(data.router)
 
 __all__ = ["api_v1_router"]

@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecocity-dev-password}
     volumes:
       - db_data:/var/lib/postgresql/data
-      # Schema init scripts land here in Phase 1 (task 1.1).
+      # PostGIS is enabled here on a fresh volume (task 1.1).
       - ./backend/db/init:/docker-entrypoint-initdb.d:ro
     ports:
       # Published on 5433 by default: a developer machine often already runs a
@@ -44,6 +44,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-ecocity}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecocity-dev-password}
       INGESTION_MODE: ${INGESTION_MODE:-demo}
+      # Startup behaviour (see backend/entrypoint.sh).
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      AUTO_SEED_DEMO: ${AUTO_SEED_DEMO:-true}
+      DEMO_SEED_DAYS: ${DEMO_SEED_DAYS:-120}
       # Absent keys are expected: the source degrades to offline, it does not fail.
       AQICN_API_KEY: ${AQICN_API_KEY:-}
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}

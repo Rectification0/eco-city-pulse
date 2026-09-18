@@ -1,0 +1,460 @@
+{
+  "type": "FeatureCollection",
+  "name": "delhi-districts",
+  "metadata": {
+    "city": "Delhi",
+    "crs": "EPSG:4326",
+    "units": "decimal degrees",
+    "district_count": 11,
+    "bbox": [
+      76.84,
+      28.4,
+      77.35,
+      28.89
+    ],
+    "accuracy": "Schematic approximation. Each district is a rectangular cell placed at the district's true relative position within the NCT bounding box; these are not surveyed administrative boundaries. Replace with an official boundary file before any operational or published use.",
+    "license": "Generated for this project; contains no third-party data."
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "north-west-delhi",
+      "properties": {
+        "district_id": "north-west-delhi",
+        "name": "North West Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.805,
+        "centroid_lon": 76.97
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              76.84,
+              28.72
+            ],
+            [
+              77.1,
+              28.72
+            ],
+            [
+              77.1,
+              28.89
+            ],
+            [
+              76.84,
+              28.89
+            ],
+            [
+              76.84,
+              28.72
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "north-delhi",
+      "properties": {
+        "district_id": "north-delhi",
+        "name": "North Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.805,
+        "centroid_lon": 77.17
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.1,
+              28.72
+            ],
+            [
+              77.24,
+              28.72
+            ],
+            [
+              77.24,
+              28.89
+            ],
+            [
+              77.1,
+              28.89
+            ],
+            [
+              77.1,
+              28.72
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "north-east-delhi",
+      "properties": {
+        "district_id": "north-east-delhi",
+        "name": "North East Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.805,
+        "centroid_lon": 77.275
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.24,
+              28.72
+            ],
+            [
+              77.31,
+              28.72
+            ],
+            [
+              77.31,
+              28.89
+            ],
+            [
+              77.24,
+              28.89
+            ],
+            [
+              77.24,
+              28.72
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "shahdara",
+      "properties": {
+        "district_id": "shahdara",
+        "name": "Shahdara",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.805,
+        "centroid_lon": 77.33
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.31,
+              28.72
+            ],
+            [
+              77.35,
+              28.72
+            ],
+            [
+              77.35,
+              28.89
+            ],
+            [
+              77.31,
+              28.89
+            ],
+            [
+              77.31,
+              28.72
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "west-delhi",
+      "properties": {
+        "district_id": "west-delhi",
+        "name": "West Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.66,
+        "centroid_lon": 76.96
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              76.84,
+              28.6
+            ],
+            [
+              77.08,
+              28.6
+            ],
+            [
+              77.08,
+              28.72
+            ],
+            [
+              76.84,
+              28.72
+            ],
+            [
+              76.84,
+              28.6
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "central-delhi",
+      "properties": {
+        "district_id": "central-delhi",
+        "name": "Central Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.66,
+        "centroid_lon": 77.13
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.08,
+              28.6
+            ],
+            [
+              77.18,
+              28.6
+            ],
+            [
+              77.18,
+              28.72
+            ],
+            [
+              77.08,
+              28.72
+            ],
+            [
+              77.08,
+              28.6
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "new-delhi",
+      "properties": {
+        "district_id": "new-delhi",
+        "name": "New Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.66,
+        "centroid_lon": 77.22
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.18,
+              28.6
+            ],
+            [
+              77.26,
+              28.6
+            ],
+            [
+              77.26,
+              28.72
+            ],
+            [
+              77.18,
+              28.72
+            ],
+            [
+              77.18,
+              28.6
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "east-delhi",
+      "properties": {
+        "district_id": "east-delhi",
+        "name": "East Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.66,
+        "centroid_lon": 77.305
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.26,
+              28.6
+            ],
+            [
+              77.35,
+              28.6
+            ],
+            [
+              77.35,
+              28.72
+            ],
+            [
+              77.26,
+              28.72
+            ],
+            [
+              77.26,
+              28.6
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "south-west-delhi",
+      "properties": {
+        "district_id": "south-west-delhi",
+        "name": "South West Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.5,
+        "centroid_lon": 76.97
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              76.84,
+              28.4
+            ],
+            [
+              77.1,
+              28.4
+            ],
+            [
+              77.1,
+              28.6
+            ],
+            [
+              76.84,
+              28.6
+            ],
+            [
+              76.84,
+              28.4
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "south-delhi",
+      "properties": {
+        "district_id": "south-delhi",
+        "name": "South Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.5,
+        "centroid_lon": 77.175
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.1,
+              28.4
+            ],
+            [
+              77.25,
+              28.4
+            ],
+            [
+              77.25,
+              28.6
+            ],
+            [
+              77.1,
+              28.6
+            ],
+            [
+              77.1,
+              28.4
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "south-east-delhi",
+      "properties": {
+        "district_id": "south-east-delhi",
+        "name": "South East Delhi",
+        "city": "Delhi",
+        "state": "NCT of Delhi",
+        "country": "IN",
+        "centroid_lat": 28.5,
+        "centroid_lon": 77.3
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.25,
+              28.4
+            ],
+            [
+              77.35,
+              28.4
+            ],
+            [
+              77.35,
+              28.6
+            ],
+            [
+              77.25,
+              28.6
+            ],
+            [
+              77.25,
+              28.4
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

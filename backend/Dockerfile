@@ -32,10 +32,16 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=appuser:appuser . .
 
+RUN chmod +x /app/entrypoint.sh
+
 USER appuser
 EXPOSE 8000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+# start-period covers migrations plus the first demo seed on a cold volume,
+# which is the slowest path this container has.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=5 \
     CMD curl -fsS http://localhost:8000/api/v1/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The entrypoint applies migrations and seeds demo data before serving, so
+# `docker compose up` still needs no follow-up commands (task 1.6 / 1.9).
+ENTRYPOINT ["/app/entrypoint.sh"]

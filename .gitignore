@@ -39,6 +39,12 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+# Exception: the district boundaries are a small, static input the demo
+# needs on a fresh clone -- not generated output (task 1.8).
+!data/raw/districts.geojson
+
+# --- Alembic (migrations are committed; only caches are not) ---
+backend/db/migrations/__pycache__/
 
 # --- ML artifacts / model registry ---
 artifacts/
@@ -50,9 +56,10 @@ artifacts/
 reports/*.html
 reports/*.pdf
 
-# --- Editors / OS ---
+# --- Editors / OS / tooling ---
 .vscode/
 .idea/
+.claude/
 *.swp
 .DS_Store
 Thumbs.db

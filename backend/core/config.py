@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "ecocitypulse"
     postgres_user: str = "ecocity"
+    # Separate from `debug` on purpose: SQL echo prints every statement and its
+    # bound parameters, which drowns out the output of a bulk load and is rarely
+    # what someone flipping DEBUG actually wants.
+    db_echo: bool = False
     # SecretStr, not str: it keeps the value out of reprs, logs, and tracebacks
     # even when a settings object is nested inside another structure.
     postgres_password: SecretStr = SecretStr("")
@@ -79,6 +83,44 @@ class Settings(BaseSettings):
     data_raw_dir: str = "data/raw"
     data_processed_dir: str = "data/processed"
     model_artifact_dir: str = "artifacts"
+
+    # --- Paths -------------------------------------------------------------
+    # Configured as relative strings, resolved by _resolve_dir below. The two
+    # candidate bases are not interchangeable: in the container the backend is
+    # copied to /app and ./data is mounted inside it, while in a local checkout
+    # data/ is a sibling of backend/. Probing both is what lets one value work
+    # in both places.
+    def _resolve_dir(self, configured: str) -> Path:
+        path = Path(configured)
+        if path.is_absolute():
+            return path
+        for base in (_BACKEND_DIR, _REPO_ROOT):
+            candidate = base / path
+            if candidate.exists():
+                return candidate
+        # Nothing exists yet (first write): the repo root is the right place
+        # to create it.
+        return _REPO_ROOT / path
+
+    @property
+    def data_raw_path(self) -> Path:
+        """Immutable landing zone (design §5)."""
+        return self._resolve_dir(self.data_raw_dir)
+
+    @property
+    def data_processed_path(self) -> Path:
+        """Cleaned / feature-engineered output (design §5)."""
+        return self._resolve_dir(self.data_processed_dir)
+
+    @property
+    def model_artifact_path(self) -> Path:
+        """Model registry storage backing ``models.artifact_path``."""
+        return self._resolve_dir(self.model_artifact_dir)
+
+    @property
+    def districts_geojson_path(self) -> Path:
+        """City district boundaries (task 1.8)."""
+        return self.data_raw_path / "districts.geojson"
 
     # Both derived values below are plain properties, deliberately NOT
     # pydantic computed fields. A computed field is rendered in the model repr
