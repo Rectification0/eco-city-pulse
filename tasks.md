@@ -70,15 +70,15 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 3.1 | Missingness analyzer — per-column counts/percentages plus **MCAR / MAR / MNAR** characterization | specs §5.3 | M | [ ] |
-| 3.2 | **MICE** imputation via scikit-learn `IterativeImputer` for complex multivariate gaps | FEAT-03, AC-4 | M | [ ] |
-| 3.3 | Forward / backward fill for contiguous short gaps | specs §5.3 | M | [ ] |
-| 3.4 | **IQR** outlier detector (boxplot bounds `Q1 − 1.5·IQR`, `Q3 + 1.5·IQR`) | specs §5.3 | M | [ ] |
-| 3.5 | **Z-Score** outlier detector (`|z| > 3`) | specs §5.3 | M | [ ] |
-| 3.6 | **Isolation Forest** multivariate anomaly detector | specs §5.3 | M | [ ] |
-| 3.7 | Combine detectors into the `is_anomaly` flag — **flag only, never delete** | AC-5 | M | [ ] |
-| 3.8 | Persist cleaned output to `data/processed/` | design §5 | S | [ ] |
-| 3.9 | Tests: zero nulls after MICE on the modelled feature set; anomalous rows **retained** and flagged | AC-4, AC-5 | M | [ ] |
+| 3.1 | Missingness analyzer — per-column counts/percentages plus **MCAR / MAR / MNAR** characterization | specs §5.3 | M | [x] |
+| 3.2 | **MICE** imputation via scikit-learn `IterativeImputer` for complex multivariate gaps | FEAT-03, AC-4 | M | [x] |
+| 3.3 | Forward / backward fill for contiguous short gaps | specs §5.3 | M | [x] |
+| 3.4 | **IQR** outlier detector (boxplot bounds `Q1 − 1.5·IQR`, `Q3 + 1.5·IQR`) | specs §5.3 | M | [x] |
+| 3.5 | **Z-Score** outlier detector (`|z| > 3`) | specs §5.3 | M | [x] |
+| 3.6 | **Isolation Forest** multivariate anomaly detector | specs §5.3 | M | [x] |
+| 3.7 | Combine detectors into the `is_anomaly` flag — **flag only, never delete** | AC-5 | M | [x] |
+| 3.8 | Persist cleaned output to `data/processed/` | design §5 | S | [x] |
+| 3.9 | Tests: zero nulls after MICE on the modelled feature set; anomalous rows **retained** and flagged | AC-4, AC-5 | M | [x] |
 
 **Exit criteria:** cleaning pipeline yields a null-free feature set while preserving every anomalous record. *(AC-4, AC-5)*
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, Form, Query, UploadFile, status
 from pydantic import BaseModel, Field
@@ -30,7 +30,7 @@ from db.models import (
     RunStatus,
 )
 from services import adapters as adapter_registry
-from services import geo_service, ingestion_service
+from services import geo_service, ingestion_service, quality
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -423,3 +423,145 @@ async def get_ingestion_runs(
             for record in quarantined
         ],
     )
+
+
+# --- Data quality (Phase 3; specs §4 — the Analyst triggers preprocessing) ---
+
+
+class AssociationResponse(BaseModel):
+    related_to: str
+    discrimination: float = Field(
+        description="AUC for separating missing rows from observed ones; 0.5 = none."
+    )
+    direction: str
+    p_value: float
+    sample_size: int
+    significant: bool
+
+
+class ColumnMissingnessResponse(BaseModel):
+    column: str
+    total: int
+    missing: int
+    missing_pct: float
+    longest_gap_rows: int
+    mechanism: str = Field(description="complete · mcar · mar · mnar")
+    associations: list[AssociationResponse]
+    justification: str
+    caveat: str
+
+
+class GridCompletenessResponse(BaseModel):
+    expected_hours: int
+    present_hours: int
+    absent_hours: int
+    completeness_pct: float
+
+
+class CoMissingnessResponse(BaseModel):
+    column: str
+    also_missing: dict[str, float]
+
+
+class MissingnessResponse(BaseModel):
+    columns: list[ColumnMissingnessResponse]
+    grid: GridCompletenessResponse
+    co_missingness: list[CoMissingnessResponse]
+    caveats: list[str]
+
+
+class ImputationResponse(BaseModel):
+    filled_short_gaps: dict[str, int]
+    imputed_by_mice: dict[str, int]
+    remaining_nulls: dict[str, int]
+    max_gap_hours: int
+    backward_fill_used: bool
+    is_complete: bool = Field(description="AC-4: no nulls left in the feature set.")
+    stations_imputed: int
+    stations_not_converged: int = Field(
+        description=(
+            "Stations where the chained equations were still moving when the "
+            "iteration budget ran out. Reported rather than hidden: the values "
+            "stay inside the observed range, but a reader deserves to know "
+            "which ones the model had not settled on."
+        )
+    )
+
+
+class AnomalyResponse(BaseModel):
+    rows: int
+    flagged: int
+    flagged_pct: float
+    votes_by_detector: dict[str, int]
+    flagged_by_column: dict[str, int]
+    min_votes: int
+    note: str
+
+
+class QualityOutputsResponse(BaseModel):
+    cleaned: str | None
+    report: str | None
+
+
+class QualityRunResponse(BaseModel):
+    """The full account of a cleaning run (AC-4, AC-5)."""
+
+    generated_at: datetime
+    window: dict[str, Any]
+    rows_in: int
+    rows_out: int
+    rows_preserved: bool = Field(
+        description="AC-5: the engine flags records, it never removes one."
+    )
+    feature_set_is_complete: bool
+    flags_written: int
+    missingness: MissingnessResponse
+    imputation: ImputationResponse
+    anomalies: AnomalyResponse
+    outputs: QualityOutputsResponse
+
+
+@router.post(
+    "/quality",
+    response_model=QualityRunResponse,
+    summary="Run the data quality pipeline",
+)
+async def run_quality(
+    session: SessionDep,
+    settings: SettingsDep,
+    max_gap_hours: Annotated[
+        int,
+        Query(ge=0, le=48, description="Longest gap filled locally before MICE takes over."),
+    ] = quality.imputation.DEFAULT_MAX_GAP_HOURS,
+    min_votes: Annotated[
+        int,
+        Query(ge=1, le=3, description="Detectors that must agree before a row is flagged."),
+    ] = quality.outliers.DEFAULT_MIN_VOTES,
+    backward_fill: Annotated[
+        bool,
+        Query(
+            description=(
+                "Backward fill reads future values. Fine for cleaning a historical "
+                "record; disable it when preparing a training window (AC-8)."
+            )
+        ),
+    ] = True,
+    persist: Annotated[
+        bool, Query(description="Write the cleaned frame to data/processed (task 3.8).")
+    ] = True,
+) -> QualityRunResponse:
+    """Impute, detect anomalies, and flag — never delete (AC-4, AC-5).
+
+    The Analyst persona's "trigger preprocessing pipelines" capability
+    (specs §4). Returns the full report rather than a job id: the run takes
+    seconds on this dataset, and an operator wants the numbers, not a handle.
+    """
+    report = quality.pipeline.run(
+        session,
+        settings,
+        max_gap_hours=max_gap_hours,
+        min_votes=min_votes,
+        backward_fill=backward_fill,
+        persist=persist,
+    )
+    return QualityRunResponse.model_validate(report.as_dict())

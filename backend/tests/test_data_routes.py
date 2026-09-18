@@ -353,3 +353,112 @@ def test_every_phase_two_route_is_documented(
     assert "/api/v1/data/ingest" in paths
     assert "/api/v1/data/upload" in paths
     assert "/api/v1/data/ingestion/runs" in paths
+
+
+# --- POST /data/quality (Phase 3) -------------------------------------------
+
+
+def test_the_quality_endpoint_reports_a_full_run(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    ingestion_service.run_demo(db_session, db_settings, days=4)
+    db_session.flush()
+
+    response = db_client.post(
+        _url(db_settings, "/data/quality"), params={"persist": False}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rows_in"] > 0
+    assert body["rows_preserved"] is True  # AC-5
+    assert body["feature_set_is_complete"] is True  # AC-4
+    assert body["imputation"]["remaining_nulls"] == {
+        "pm25": 0,
+        "pm10": 0,
+        "temp": 0,
+        "humidity": 0,
+        "traffic_score": 0,
+    }
+
+
+def test_the_quality_response_explains_each_mechanism(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    """design §7: the MCAR/MAR judgement is the justification for the
+    imputation choice, so it has to reach the caller."""
+    ingestion_service.run_demo(db_session, db_settings, days=4)
+    db_session.flush()
+
+    body = db_client.post(
+        _url(db_settings, "/data/quality"), params={"persist": False}
+    ).json()
+
+    for column in body["missingness"]["columns"]:
+        assert column["mechanism"] in {"complete", "mcar", "mar", "mnar"}
+        assert column["justification"]
+
+
+def test_the_quality_response_never_claims_mnar_was_excluded(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    ingestion_service.run_demo(db_session, db_settings, days=4)
+    db_session.flush()
+
+    body = db_client.post(
+        _url(db_settings, "/data/quality"), params={"persist": False}
+    ).json()
+
+    assert any("MNAR cannot be ruled out" in c for c in body["missingness"]["caveats"])
+
+
+def test_the_quality_response_qualifies_what_a_flag_means(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    """ETH-1's habit applied to the quality engine: no number without its
+    limits."""
+    ingestion_service.run_demo(db_session, db_settings, days=4)
+    db_session.flush()
+
+    body = db_client.post(
+        _url(db_settings, "/data/quality"), params={"persist": False}
+    ).json()
+
+    assert "sensor fault" in body["anomalies"]["note"]
+
+
+def test_the_vote_threshold_is_rejected_when_out_of_range(
+    db_client: TestClient, db_settings: Settings
+) -> None:
+    """SEC-1: query parameters are validated, not trusted."""
+    response = db_client.post(
+        _url(db_settings, "/data/quality"), params={"min_votes": 9}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation_failed"
+
+
+def test_the_quality_route_is_documented(
+    db_client: TestClient, db_settings: Settings
+) -> None:
+    paths = db_client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/data/quality" in paths
+
+
+def test_the_quality_response_reports_mice_convergence(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    """A run that did not settle is information the caller should have, not a
+    warning on a console nobody is reading."""
+    ingestion_service.run_demo(db_session, db_settings, days=4)
+    db_session.flush()
+
+    body = db_client.post(
+        _url(db_settings, "/data/quality"), params={"persist": False}
+    ).json()
+
+    imputation = body["imputation"]
+    assert imputation["stations_imputed"] >= 1
+    assert imputation["stations_not_converged"] <= imputation["stations_imputed"]

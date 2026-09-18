@@ -35,6 +35,9 @@ yarn-error.log*
 pnpm-debug.log*
 
 # --- Data (raw/processed are generated or large; keep dirs via .gitkeep) ---
+# data/processed holds the quality engine's output -- the cleaned frame and
+# its report (task 3.8). Both are reproducible from the database, so neither
+# is committed.
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep

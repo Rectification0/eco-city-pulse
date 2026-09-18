@@ -47,6 +47,7 @@ services:
       # Startup behaviour (see backend/entrypoint.sh).
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       AUTO_SEED_DEMO: ${AUTO_SEED_DEMO:-true}
+      AUTO_RUN_QUALITY: ${AUTO_RUN_QUALITY:-true}
       DEMO_SEED_DAYS: ${DEMO_SEED_DAYS:-120}
       # Scheduled mode only; ignored in demo mode, which never polls.
       INGESTION_INTERVAL_MINUTES: ${INGESTION_INTERVAL_MINUTES:-60}

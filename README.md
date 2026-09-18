@@ -33,9 +33,11 @@ docker compose up --build
 | API docs (Swagger) | <http://localhost:8000/docs> |
 | PostgreSQL (container) | `localhost:5433` |
 
-On first boot the backend applies migrations and loads the demo dataset before
-it starts serving, so there is nothing to run afterwards. Cold start takes
-roughly a minute; `docker compose logs -f backend` shows the progress.
+On first boot the backend applies migrations, loads the demo dataset, and runs
+the data quality pipeline over it before it starts serving — so there is nothing
+to run afterwards and the demo opens on cleaned, anomaly-flagged data. Cold
+start takes a minute or two; `docker compose logs -f backend` shows the
+progress.
 
 > The database container publishes on **5433**, not 5432, so it does not collide
 > with a PostgreSQL already installed on the machine. Inside the compose network
@@ -275,6 +277,122 @@ decided by content, not by the file extension.
 
 ---
 
+## Data quality
+
+BACSE301 Module 2 (specs §5.3, design §7). Repairs values and flags records --
+and **never removes one**.
+
+```
+analyse missingness → fill short gaps → MICE → three detectors vote → flag → persist
+```
+
+```bash
+curl -X POST localhost:8000/api/v1/data/quality | jq     # or:
+cd backend && python -m scripts.run_quality
+```
+
+### What can and cannot be inferred about missingness
+
+The requirement says "detect MCAR, MAR, MNAR". Two of those three are testable
+and one is not, so the engine is explicit about which is which:
+
+| Mechanism | How it is decided |
+|-----------|-------------------|
+| **MAR** | A rank test finds the column's missingness predictable from *observed* values of another variable (or from the hour of day). That is the condition under which MICE is the right repair. |
+| **MCAR** | No such association survives a Bonferroni-corrected threshold and an effect-size floor. |
+| **MNAR** | **Never inferred.** Missingness that depends on the *unobserved* value is not identifiable from the data — the evidence that would separate it from MCAR is precisely what is missing. It is accepted only as a declared domain rule with a stated justification. |
+
+Every incomplete column carries the caveat that MNAR cannot be excluded. This
+is the same discipline ETH-1 imposes on the UI, applied to the statistics.
+
+The test is **Mann-Whitney U with an AUC effect size**, not a correlation. That
+choice is load-bearing: missingness concentrated in a predictor's tail — a
+sensor that saturates above some concentration — is a 20× effect that linear
+correlation reads as r ≈ 0.01. An earlier point-biserial implementation
+reported MCAR for exactly that mechanism.
+
+Two things are reported alongside the verdict:
+
+- **Grid completeness** — hours absent from the series entirely, as opposed to
+  rows present with a null. Only the second shows up in a column null count, so
+  reporting both prevents an "only 3% missing" claim about a feed that skipped
+  a fortnight.
+- **Co-missingness** — which columns go missing together. Four sensors dropping
+  out in the same hours is one station outage, not four independent quirks.
+
+### Imputation
+
+| Gap | Repair | Why |
+|-----|--------|-----|
+| Contiguous, ≤ `max_gap_hours` (default 3) | Forward/backward fill | For an hour or two of a smooth physical series the neighbouring value beats any model |
+| Everything else | **MICE** (`IterativeImputer`) | Conditions each column on the others — exactly right for a MAR mechanism |
+
+Only *whole* short runs are filled. `ffill(limit=n)` would fill the first n
+hours of a week-long outage, fabricating the start of a flat line; a run is
+filled entirely or left to MICE.
+
+Both stages run **per station**. A fill that crossed stations would carry one
+sensor's reading into another's gap; a model fitted across the city's pollution
+gradient would regress every station toward the mean.
+
+Imputed values are bounded by the range actually observed — an unconstrained
+linear model will happily predict a negative concentration — and the run is
+deterministic, because AC-4's guarantee is worthless if the numbers change
+between runs. Stations where the chained equations had not converged within the
+iteration budget are **counted in the report** rather than warned about.
+
+### Outliers
+
+| Detector | Rule | Sees |
+|----------|------|------|
+| IQR | outside `[Q1 − 1.5·IQR, Q3 + 1.5·IQR]` | one column |
+| Z-score | `\|z\| > 3` | one column |
+| Isolation Forest | multivariate anomaly score | every column |
+
+A row is flagged when **at least two of the three agree** (configurable). Three
+choices keep the flag meaningful:
+
+- **Bounds are fitted per station.** A city-wide IQR on a real pollution
+  gradient flags the dirtiest district wholesale rather than any anomaly.
+- **An imputed value is never flagged.** The detectors need a complete matrix,
+  so they run after imputation — but a column only votes where the original
+  reading was actually observed. Otherwise the engine would flag its own
+  invention.
+- **Isolation Forest uses an explicit 2% contamination**, not scikit-learn's
+  `"auto"`, which flagged 24% of this dataset. A detector that calls a quarter
+  of the data anomalous contributes nothing to a vote.
+
+> **A flag is not a diagnosis.** These are statistical outliers. They cannot
+> distinguish a faulty sensor from a genuine pollution episode — a
+> stubble-burning night, a festival, a still winter inversion look identical in
+> the numbers. That is exactly why the record is kept and the judgement left to
+> a human (AC-5).
+
+### What gets written
+
+`observations.is_anomaly`, and nothing else. Phase 2's ingestion owns the
+measurement columns and never touches this one, so the two write paths never
+fight: ingestion records what arrived, the quality engine records what it thinks
+of it. Imputed values are **not** written back — `observations` holds what was
+measured, and the repaired frame is a derived artefact.
+
+That artefact goes to `data/processed/`:
+
+| File | Contents |
+|------|----------|
+| `observations_cleaned.csv` | The null-free feature set |
+| `quality_report.json` | Counts, mechanisms, justifications, and every caveat |
+
+CSV rather than Parquet: the dataset is small, the file stays readable without
+a toolchain, and it adds no dependency. The report travels beside it so a
+cleaned file is never separated from the account of how it was produced.
+
+Flags are written in both directions — a row that no longer meets the threshold
+is unflagged — so the column reflects the current detectors rather than the
+union of every run ever made. Unflagging changes a judgement, never the data.
+
+---
+
 ## Local development
 
 ### Database
@@ -366,13 +484,16 @@ eco-city-pulse/
 │   │   └── migrations/          # Alembic env + versions
 │   ├── services/
 │   │   ├── adapters/            # One module per source + the registry
+│   │   ├── quality/             # Missingness, imputation, outliers, pipeline
 │   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
 │   │   ├── ingestion_service.py # The single write path
+│   │   ├── datasets.py          # The pandas boundary
 │   │   ├── scheduler.py         # Scheduled-mode background task
 │   │   ├── demo_data.py         # Offline demo dataset generator
 │   │   └── geo_service.py       # Districts and station locations
 │   ├── scripts/
-│   │   └── seed_demo.py         # python -m scripts.seed_demo
+│   │   ├── seed_demo.py         # python -m scripts.seed_demo
+│   │   └── run_quality.py       # python -m scripts.run_quality
 │   ├── tests/
 │   ├── alembic.ini
 │   ├── entrypoint.sh            # Migrate, seed if empty, then serve
@@ -380,7 +501,7 @@ eco-city-pulse/
 │   └── requirements.txt
 ├── data/
 │   ├── raw/                     # Immutable landing zone — districts.geojson
-│   └── processed/               # Cleaned / feature-engineered output
+│   └── processed/               # Cleaned frame + quality report (generated)
 ├── docker-compose.yml
 └── README.md
 ```
@@ -409,6 +530,7 @@ All configuration is environment-driven and parsed once in `backend/core/config.
 | `INGESTION_INTERVAL_MINUTES` | `60` | Scheduled mode only. Hourly, because DR-4 puts every source on an hourly grid |
 | `INGESTION_STARTUP_DELAY_SECONDS` | `30` | Grace period before the first scheduled run |
 | `UPLOAD_MAX_BYTES` | `10000000` | Ceiling for `POST /data/upload`, enforced on bytes actually read |
+| `AUTO_RUN_QUALITY` | `true` | Run the quality pipeline once, right after a fresh demo seed |
 
 ---
 
@@ -426,6 +548,7 @@ is the security boundary (SEC-1). Full contract at
 | `POST` | `/data/ingest` | Trigger a run (Manual / Demo) | ✅ Phase 2 |
 | `POST` | `/data/upload` | Ingest a CSV or JSON file | ✅ Phase 2 |
 | `GET` | `/data/ingestion/runs` | The ingestion log | ✅ Phase 2 |
+| `POST` | `/data/quality` | Impute, detect anomalies, flag | ✅ Phase 3 |
 | `POST` | `/eda/profile` | Univariate + bivariate statistics | Phase 4 |
 | `POST` | `/eda/reduce` | PCA components, variance, loadings | Phase 6 |
 | `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
@@ -450,7 +573,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 | **0** | Project foundation — containers, config, app factory, health, tests | ✅ Complete |
 | **1** | Data layer — schema, migrations, PostGIS, demo seed, district boundaries | ✅ Complete |
 | **2** | Ingestion engine — adapters, harmonizer, quarantine, four modes (FEAT-01) | ✅ Complete |
-| 3 | Data quality engine — MICE, outliers | ⬜ |
+| **3** | Data quality engine — missingness, MICE, outlier vote | ✅ Complete |
 | 4 | EDA & statistical engine (FEAT-02) | ⬜ |
 | 5 | Feature engineering | ⬜ |
 | 6 | Dimensionality reduction & ESI (FEAT-04) | ⬜ |
@@ -477,7 +600,7 @@ Only public environmental data is used. Any text analysis aggregates metrics onl
 | Module | Topic | Implementation |
 |--------|-------|----------------|
 | Mod 1 | Data Collection & Structure | Multi-source API & CSV ingestion, JSON validation, DB storage |
-| Mod 2 | Data Preprocessing | MICE imputation, Z-score / Isolation Forest anomaly detection, scaling |
+| Mod 2 | Data Preprocessing | MCAR/MAR analysis, MICE imputation, IQR / Z-score / Isolation Forest anomaly vote — **implemented** (Phase 3) |
 | Mod 3 | Descriptive Stats & Visualization | Automated EDA dashboard — histograms, boxplots, correlation heatmaps |
 | Mod 4 | Dimensionality & Time-Series | PCA-based Environmental Stress Index, STL decomposition |
 | Mod 5 | Advanced Visualization | Parallel coordinates, missingness matrix, automated HTML/PDF reports |

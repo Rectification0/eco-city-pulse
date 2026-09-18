@@ -17,6 +17,14 @@ if [ "${INGESTION_MODE:-demo}" = "demo" ] && [ "${AUTO_SEED_DEMO:-true}" = "true
     if python -m scripts.check_seed_needed; then
         echo "[entrypoint] seeding demo dataset (offline, no API keys)..."
         python -m scripts.seed_demo --days "${DEMO_SEED_DAYS:-120}"
+
+        # Only after a fresh seed. On a restart the flags and the cleaned
+        # export are already there, and re-running would delay the healthcheck
+        # for no gain -- POST /data/quality re-runs it on demand.
+        if [ "${AUTO_RUN_QUALITY:-true}" = "true" ]; then
+            echo "[entrypoint] running the data quality pipeline..."
+            python -m scripts.run_quality
+        fi
     else
         echo "[entrypoint] observations already present; skipping demo seed."
     fi
