@@ -10,6 +10,7 @@ pydantic-settings>=2.6,<3.0        # SEC-2: settings sourced from env
 # --- Persistence ---
 SQLAlchemy>=2.0,<3.0
 psycopg[binary]>=3.2,<4.0
+alembic>=1.14,<2.0                 # schema migrations (task 1.6)
 
 # --- Data engineering / EDA ---
 pandas>=2.2,<3.0

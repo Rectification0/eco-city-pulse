@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.engine import make_url
 
 from core.config import IngestionMode, Settings
 
@@ -11,6 +12,35 @@ def test_database_url_is_assembled_from_parts(settings: Settings) -> None:
     assert settings.database_url == (
         "postgresql+psycopg://ecocity:test-only@db:5432/ecocitypulse"
     )
+
+
+@pytest.mark.parametrize(
+    ("password", "encoded"),
+    [
+        ("ex@mple-p4ss", "ex%40mple-p4ss"),
+        ("p:ss/w?rd#1", "p%3Ass%2Fw%3Frd%231"),
+        ("plain", "plain"),
+    ],
+)
+def test_database_url_percent_encodes_credentials(password: str, encoded: str) -> None:
+    """A literal '@' in a password splits the URL at the wrong place, so the
+    host is misparsed and the connection fails. Encode rather than assume
+    well-behaved credentials."""
+    url = Settings(_env_file=None, postgres_password=password).database_url
+
+    assert url == f"postgresql+psycopg://ecocity:{encoded}@db:5432/ecocitypulse"
+    # Exactly one '@' -- the delimiter between credentials and host.
+    assert url.count("@") == 1
+
+
+def test_database_url_is_parseable_by_sqlalchemy() -> None:
+    """The URL must survive the parser that actually consumes it."""
+    url = make_url(Settings(_env_file=None, postgres_password="ex@mple-p4ss").database_url)
+
+    assert url.host == "db"
+    assert url.port == 5432
+    assert url.database == "ecocitypulse"
+    assert url.password == "ex@mple-p4ss"  # round-trips back to the raw value
 
 
 @pytest.fixture

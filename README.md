@@ -29,7 +29,11 @@ docker compose up --build
 | Frontend | <http://localhost:8080> |
 | API health | <http://localhost:8000/api/v1/health> |
 | API docs (Swagger) | <http://localhost:8000/docs> |
-| PostgreSQL | `localhost:5432` |
+| PostgreSQL (container) | `localhost:5433` |
+
+> The database container publishes on **5433**, not 5432, so it does not collide
+> with a PostgreSQL already installed on the machine. Inside the compose network
+> the backend still reaches it on 5432.
 
 **No API keys are required.** The platform defaults to `INGESTION_MODE=demo` and runs entirely offline — a hard requirement from the spec (DR-1), not a convenience.
 
@@ -54,6 +58,24 @@ frontend (nginx:80) ──/api/──► backend (uvicorn:8000) ──► db (po
 ---
 
 ## Local development
+
+### Database
+
+Two supported setups:
+
+| Setup | How | PostGIS |
+|-------|-----|---------|
+| **Container** (default) | `docker compose up` — uses the `postgis/postgis:16-3.4` image | ✅ included |
+| **Existing local server** | Point `POSTGRES_HOST`/`POSTGRES_PORT` at it in `.env` | ⚠️ only if installed separately |
+
+```bash
+cp .env.example .env      # then edit POSTGRES_* to taste
+```
+
+> **PostGIS caveat.** A stock PostgreSQL install does not ship PostGIS. Without
+> it, everything works *except* the spatial features — district GeoJSON joins
+> and the map layers (tasks 1.1, 1.8, 10.4). Use the compose database for those,
+> or install PostGIS into the local server via Stack Builder.
 
 ### Backend
 
@@ -121,7 +143,10 @@ All configuration is environment-driven and parsed once in `backend/core/config.
 |----------|---------|-------|
 | `INGESTION_MODE` | `demo` | `scheduled` · `manual` · `upload` · `demo` |
 | `FRONTEND_ORIGINS` | `http://localhost:8080,http://localhost:5173` | CORS allowlist; never `*` (SEC-3) |
-| `POSTGRES_PASSWORD` | — | Required in production |
+| `POSTGRES_HOST` | `db` | `localhost` to use a database already on the machine |
+| `POSTGRES_PORT` | `5432` | Port the **backend connects to** |
+| `POSTGRES_HOST_PORT` | `5433` | Port the **container publishes on** the host |
+| `POSTGRES_PASSWORD` | — | Required in production; safe to contain `@`, `:`, `/` — it is percent-encoded into the connection URL |
 | `AQICN_API_KEY` | *(empty)* | Optional — blank means that source runs offline |
 | `OPENWEATHER_API_KEY` | *(empty)* | Optional |
 | `TOMTOM_API_KEY` | *(empty)* | Optional; a synthetic traffic baseline substitutes |

@@ -16,7 +16,10 @@ services:
       # Schema init scripts land here in Phase 1 (task 1.1).
       - ./backend/db/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Published on 5433 by default: a developer machine often already runs a
+      # local PostgreSQL on 5432, and publishing there would fail to bind.
+      # Inside the compose network the backend still reaches it on 5432.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ecocity} -d ${POSTGRES_DB:-ecocitypulse}"]
       interval: 10s

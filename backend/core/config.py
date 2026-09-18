@@ -9,9 +9,20 @@ from __future__ import annotations
 
 from enum import Enum
 from functools import lru_cache
+from pathlib import Path
+from urllib.parse import quote
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _BACKEND_DIR.parent
+
+# Resolved from this file, not the working directory: the .env sits at the repo
+# root (where docker compose also reads it), but the backend is normally run
+# from backend/, so a bare ".env" would silently never be found. A backend/.env
+# still wins if one exists, since later entries take precedence.
+_ENV_FILES = (_REPO_ROOT / ".env", _BACKEND_DIR / ".env")
 
 
 class IngestionMode(str, Enum):
@@ -29,7 +40,7 @@ class IngestionMode(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -81,10 +92,17 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """SQLAlchemy URL assembled from parts so the password stays in env."""
+        """SQLAlchemy URL assembled from parts so the password stays in env.
+
+        User and password are percent-encoded: a password containing "@", ":",
+        "/", "?" or "#" -- all common in generated credentials -- would
+        otherwise produce a URL that parses into the wrong host or fails
+        outright. safe="" so that "/" is encoded too.
+        """
+        user = quote(self.postgres_user, safe="")
+        password = quote(self.postgres_password.get_secret_value(), safe="")
         return (
-            f"postgresql+psycopg://{self.postgres_user}"
-            f":{self.postgres_password.get_secret_value()}"
+            f"postgresql+psycopg://{user}:{password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
