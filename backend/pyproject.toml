@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+# rootdir is backend/, so `pytest` from here resolves `main`, `core`, `api`
+# the same way uvicorn does in the container.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:api.*", "error::DeprecationWarning:core.*"]

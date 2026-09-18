@@ -1,0 +1,71 @@
+# Eco-City Pulse — modular monolith, three containers (design §4).
+#
+# `docker compose up --build` is the whole setup. With no .env present the
+# stack still starts in demo mode with no API keys (DR-1 / AC-2).
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: ecocity-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ecocitypulse}
+      POSTGRES_USER: ${POSTGRES_USER:-ecocity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecocity-dev-password}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Schema init scripts land here in Phase 1 (task 1.1).
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ecocity} -d ${POSTGRES_DB:-ecocitypulse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    container_name: ecocity-backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-false}
+      # SEC-3: the browser reaches the API through the Nginx proxy on :8080,
+      # so that is the origin the allowlist must contain (5173 covers `npm run dev`).
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-ecocitypulse}
+      POSTGRES_USER: ${POSTGRES_USER:-ecocity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecocity-dev-password}
+      INGESTION_MODE: ${INGESTION_MODE:-demo}
+      # Absent keys are expected: the source degrades to offline, it does not fail.
+      AQICN_API_KEY: ${AQICN_API_KEY:-}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - model_artifacts:/app/artifacts
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ecocity-frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  model_artifacts:

@@ -14,15 +14,15 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 0.1 | Create repository skeleton exactly per the specified directory structure (`frontend/`, `backend/`, `data/raw`, `data/processed`) | design §5 | M | [ ] |
-| 0.2 | Write `docker-compose.yml` with three services: `frontend` (Nginx), `backend` (FastAPI), `db` (PostgreSQL + PostGIS) | AC-1 | M | [ ] |
-| 0.3 | Backend `Dockerfile` + `requirements.txt` (fastapi, uvicorn, pydantic, sqlalchemy, psycopg, pandas, numpy, scikit-learn, xgboost, statsmodels, shap, prophet) | AC-1 | M | [ ] |
-| 0.4 | Frontend scaffold — Vite + React + TypeScript + Tailwind; multi-stage Dockerfile building to Nginx | AC-1 | M | [ ] |
-| 0.5 | `backend/core/config.py` — Pydantic settings reading all secrets from env; `.env.example` committed, `.env` gitignored | SEC-2 | M | [ ] |
-| 0.6 | `backend/main.py` app factory — CORS restricted to frontend origin, router registration, `/health` endpoint | SEC-3 | M | [ ] |
-| 0.7 | `backend/core/exceptions.py` — domain exceptions and handlers mapping them to HTTP responses | design §11 | M | [ ] |
-| 0.8 | `README.md` — one-command startup instructions and architecture summary | — | M | [ ] |
-| 0.9 | Pytest harness + CI-ready test command; `backend/tests/` bootstrapped | OBJ-5 | S | [ ] |
+| 0.1 | Create repository skeleton exactly per the specified directory structure (`frontend/`, `backend/`, `data/raw`, `data/processed`) | design §5 | M | [x] |
+| 0.2 | Write `docker-compose.yml` with three services: `frontend` (Nginx), `backend` (FastAPI), `db` (PostgreSQL + PostGIS) | AC-1 | M | [x] |
+| 0.3 | Backend `Dockerfile` + `requirements.txt` (fastapi, uvicorn, pydantic, sqlalchemy, psycopg, pandas, numpy, scikit-learn, xgboost, statsmodels, shap, prophet) | AC-1 | M | [x] |
+| 0.4 | Frontend scaffold — Vite + React + TypeScript + Tailwind; multi-stage Dockerfile building to Nginx | AC-1 | M | [x] |
+| 0.5 | `backend/core/config.py` — Pydantic settings reading all secrets from env; `.env.example` committed, `.env` gitignored | SEC-2 | M | [x] |
+| 0.6 | `backend/main.py` app factory — CORS restricted to frontend origin, router registration, `/health` endpoint | SEC-3 | M | [x] |
+| 0.7 | `backend/core/exceptions.py` — domain exceptions and handlers mapping them to HTTP responses | design §11 | M | [x] |
+| 0.8 | `README.md` — one-command startup instructions and architecture summary | — | M | [x] |
+| 0.9 | Pytest harness + CI-ready test command; `backend/tests/` bootstrapped | OBJ-5 | S | [x] |
 
 **Exit criteria:** `docker-compose up` brings all three containers healthy; frontend reaches `/api/v1/health`. *(AC-1)*
 

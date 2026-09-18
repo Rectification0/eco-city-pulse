@@ -1,0 +1,29 @@
+# Eco-City Pulse — backend dependencies
+# Later phases append their own; this is the Phase 0 baseline.
+
+# --- Web / API layer ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32,<1.0
+pydantic>=2.9,<3.0
+pydantic-settings>=2.6,<3.0        # SEC-2: settings sourced from env
+
+# --- Persistence ---
+SQLAlchemy>=2.0,<3.0
+psycopg[binary]>=3.2,<4.0
+
+# --- Data engineering / EDA ---
+pandas>=2.2,<3.0
+numpy>=1.26,<3.0
+
+# --- Statistics / modelling ---
+scikit-learn>=1.5,<2.0             # IterativeImputer (MICE), PCA, IsolationForest
+statsmodels>=0.14,<1.0             # STL decomposition, ARIMA
+xgboost>=2.1,<4.0
+prophet>=1.1,<2.0
+
+# --- Explainability ---
+shap>=0.46,<1.0
+
+# --- Tests ---
+pytest>=8.3,<9.0
+httpx>=0.27,<1.0                   # FastAPI TestClient transport

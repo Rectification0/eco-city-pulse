@@ -1,0 +1,14 @@
+# Normalise to LF in the repository. These files are consumed by Linux
+# containers (Dockerfiles, nginx.conf, and the DB init scripts added in
+# Phase 1), where CRLF would break shell shebangs.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+
+# Generated: collapse in diffs and exclude from language stats.
+frontend/package-lock.json linguist-generated=true -diff
