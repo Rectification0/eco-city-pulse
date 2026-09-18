@@ -14,7 +14,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-
 # Starlette renamed HTTP_422_UNPROCESSABLE_ENTITY to _CONTENT and deprecated
 # the old name. A literal is version-proof across the range in requirements.txt.
 HTTP_422 = 422
@@ -59,6 +58,31 @@ class SchemaValidationError(EcoCityPulseError):
 
     status_code = HTTP_422
     code = "schema_validation_failed"
+
+
+class HarmonizationError(SchemaValidationError):
+    """A record passed its schema but could not be normalized (DR-2 … DR-4).
+
+    A subclass of SchemaValidationError because it is the same kind of failure
+    from the caller's side -- the record is unusable -- but a distinct type so
+    the ingestion log can say *which* stage rejected it.
+    """
+
+    code = "harmonization_failed"
+
+
+class UnknownSourceError(EcoCityPulseError):
+    """An ingestion run was requested for a source that is not registered."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    code = "unknown_source"
+
+
+class UploadRejectedError(EcoCityPulseError):
+    """An uploaded file was unreadable, too large, or of an unsupported type."""
+
+    status_code = HTTP_422
+    code = "upload_rejected"
 
 
 # --- Data / EDA (Phases 3-4) ---

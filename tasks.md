@@ -50,17 +50,17 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 2.1 | Source adapter interface; concrete adapters: **AQICN** (air quality), **OpenWeather** (weather), **TomTom** (traffic) | specs §5.1 | M | [ ] |
-| 2.2 | Synthetic traffic-score generator as the fallback when no traffic API key is configured | specs §5.1 | M | [ ] |
-| 2.3 | CSV / JSON upload parser with per-source Pydantic schema validation | FEAT-01, SEC-1 | M | [ ] |
-| 2.4 | Harmonizer — all timestamps → **UTC** | DR-2 | M | [ ] |
-| 2.5 | Harmonizer — all coordinates → **decimal degrees** | DR-3 | M | [ ] |
-| 2.6 | Harmonizer — resample all sources to **hourly** granularity (mean within hour) | DR-4 | M | [ ] |
-| 2.7 | `ingestion_service.py` — single write path to `observations`, with quarantine for malformed records | FEAT-01 | M | [ ] |
-| 2.8 | Ingestion log + `data_sources.status` / `last_run` updates; failed live fetch degrades source to `offline` without failing the request | FEAT-01, DR-1 | M | [ ] |
-| 2.9 | Implement all four modes: **Scheduled (cron)**, **Manual (admin trigger)**, **Upload (CSV)**, **Demo (pre-loaded)** | DR-1 | M | [ ] |
-| 2.10 | `GET /api/v1/data/sources` — sources with ingestion health | specs §8 | M | [ ] |
-| 2.11 | Tests: schema rejection, UTC conversion, hourly resample correctness, offline degradation | AC-2 | M | [ ] |
+| 2.1 | Source adapter interface; concrete adapters: **AQICN** (air quality), **OpenWeather** (weather), **TomTom** (traffic) | specs §5.1 | M | [x] |
+| 2.2 | Synthetic traffic-score generator as the fallback when no traffic API key is configured | specs §5.1 | M | [x] |
+| 2.3 | CSV / JSON upload parser with per-source Pydantic schema validation | FEAT-01, SEC-1 | M | [x] |
+| 2.4 | Harmonizer — all timestamps → **UTC** | DR-2 | M | [x] |
+| 2.5 | Harmonizer — all coordinates → **decimal degrees** | DR-3 | M | [x] |
+| 2.6 | Harmonizer — resample all sources to **hourly** granularity (mean within hour) | DR-4 | M | [x] |
+| 2.7 | `ingestion_service.py` — single write path to `observations`, with quarantine for malformed records | FEAT-01 | M | [x] |
+| 2.8 | Ingestion log + `data_sources.status` / `last_run` updates; failed live fetch degrades source to `offline` without failing the request | FEAT-01, DR-1 | M | [x] |
+| 2.9 | Implement all four modes: **Scheduled (cron)**, **Manual (admin trigger)**, **Upload (CSV)**, **Demo (pre-loaded)** | DR-1 | M | [x] |
+| 2.10 | `GET /api/v1/data/sources` — sources with ingestion health | specs §8 | M | [x] |
+| 2.11 | Tests: schema rejection, UTC conversion, hourly resample correctness, offline degradation | AC-2 | M | [x] |
 
 **Exit criteria:** ingestion completes end-to-end in Demo mode with **every live API disabled**. *(AC-2)*
 

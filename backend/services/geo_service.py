@@ -8,6 +8,7 @@ it on every dashboard load.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -65,9 +66,44 @@ def district_centroids(settings: Settings | None = None) -> dict[str, tuple[floa
     }
 
 
+@dataclass(frozen=True, slots=True)
+class Station:
+    """A monitoring location: one point every source is sampled at.
+
+    Lives here rather than in a source module because every adapter needs the
+    same list -- the demo generator, the live API clients, and the synthetic
+    traffic fallback all sample the same places, which is what makes their
+    readings joinable.
+    """
+
+    district_id: str
+    lat: float
+    lon: float
+
+
+def stations_from_districts(settings: Settings | None = None) -> list[Station]:
+    """One station per district, placed on the centroid from task 1.8.
+
+    Tying the two together means readings always fall inside the polygons the
+    map draws, so the spatial gradient on the dashboard is real rather than a
+    coincidence of two independent coordinate lists.
+    """
+    centroids = district_centroids(settings)
+    return [
+        Station(district_id=district_id, lat=lat, lon=lon)
+        for district_id, (lat, lon) in sorted(centroids.items())
+    ]
+
+
 def clear_cache() -> None:
     """Drop the in-memory copy. Used by tests that swap the data directory."""
     _CACHE.clear()
 
 
-__all__ = ["clear_cache", "district_centroids", "load_districts"]
+__all__ = [
+    "Station",
+    "clear_cache",
+    "district_centroids",
+    "load_districts",
+    "stations_from_districts",
+]

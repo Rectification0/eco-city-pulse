@@ -73,6 +73,16 @@ class Settings(BaseSettings):
 
     # --- Ingestion ---
     ingestion_mode: IngestionMode = IngestionMode.DEMO
+    # Scheduled mode only: how often the background task fires. Hourly by
+    # default because DR-4 puts every source on an hourly grid -- polling
+    # faster would just resample the same hour repeatedly.
+    ingestion_interval_minutes: int = 60
+    # Delay before the first scheduled run, so a container restart does not
+    # fire requests at three upstreams while the app is still warming up.
+    ingestion_startup_delay_seconds: int = 30
+    # Upload ceiling, enforced on bytes actually read (SEC-1). 10 MB is roughly
+    # 150k rows of hourly observations.
+    upload_max_bytes: int = 10_000_000
 
     # --- Third-party API keys (optional by design: absent key => offline source) ---
     aqicn_api_key: SecretStr = SecretStr("")

@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from core.config import Settings
-from services import geo_service
+from services.geo_service import Station, stations_from_districts
 
 # Anchor for the autocorrelated residual chain. Fixed so that a given hour gets
 # the same value no matter which window a run asks for.
@@ -64,15 +64,6 @@ LIVE_SOURCES: tuple[tuple[str, str], ...] = (
 
 
 @dataclass(frozen=True, slots=True)
-class Station:
-    """A virtual monitoring station sitting on a district centroid."""
-
-    district_id: str
-    lat: float
-    lon: float
-
-
-@dataclass(frozen=True, slots=True)
 class DemoObservation:
     """One synthetic hourly reading, in the shape of an ``observations`` row."""
 
@@ -85,20 +76,6 @@ class DemoObservation:
     temp: float | None
     humidity: float | None
     traffic_score: float | None
-
-
-def stations_from_districts(settings: Settings | None = None) -> list[Station]:
-    """One station per district, placed on the centroid from task 1.8.
-
-    Tying the two together means seeded points always fall inside the polygons
-    the map draws, so the spatial gradient on the dashboard is real rather than
-    a coincidence of two independent coordinate lists.
-    """
-    centroids = geo_service.district_centroids(settings)
-    return [
-        Station(district_id=district_id, lat=lat, lon=lon)
-        for district_id, (lat, lon) in sorted(centroids.items())
-    ]
 
 
 def _station_offset(station: Station) -> float:
@@ -293,6 +270,26 @@ def generate_station_series(
         )
 
 
+def synthetic_traffic_score(
+    moment: datetime, *, station: Station, seed: int = DEFAULT_SEED
+) -> float:
+    """Congestion index 0-100 for one station and hour, with no network.
+
+    The fallback behind task 2.2: when no traffic API key is configured, this
+    stands in for TomTom. It is the *same* curve the demo bundle uses, so the
+    synthetic series is continuous with the seeded history rather than a second
+    traffic model with its own personality.
+
+    Deterministic in ``(station, hour)``: two calls for the same hour agree,
+    which keeps re-ingestion idempotent.
+    """
+    moment = moment.astimezone(timezone.utc)
+    local = moment + LOCAL_OFFSET
+    rng = random.Random(f"{seed}:traffic:{station.district_id}:{moment:%Y-%m-%dT%H}")
+    score = _traffic(local) + rng.gauss(0.0, 4.0)
+    return round(min(100.0, max(0.0, score)), 2)
+
+
 def floor_to_hour(moment: datetime) -> datetime:
     """DR-4: every demo timestamp sits exactly on the hourly grid."""
     return moment.replace(minute=0, second=0, microsecond=0)
@@ -337,4 +334,5 @@ __all__ = [
     "generate_observations",
     "generate_station_series",
     "stations_from_districts",
+    "synthetic_traffic_score",
 ]

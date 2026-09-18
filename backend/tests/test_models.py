@@ -15,7 +15,7 @@ from db.base import Base
 from db.models import DataSource, MLModel, Observation, Prediction, SourceStatus
 
 # The column sets the specification names, verbatim.
-EXPECTED_COLUMNS = {
+SPEC_COLUMNS = {
     "data_sources": {"id", "name", "api_url", "status", "last_run"},
     "observations": {
         "id",
@@ -51,11 +51,21 @@ EXPECTED_COLUMNS = {
 }
 
 
-def test_all_four_tables_are_defined() -> None:
-    assert set(Base.metadata.tables) == set(EXPECTED_COLUMNS)
+# Beyond specs §9, and deliberately so: FEAT-01 requires an ingestion log as
+# its output without saying where it lives (tasks 2.7, 2.8).
+LOG_TABLES = {"ingestion_runs", "quarantined_records"}
 
 
-@pytest.mark.parametrize(("table", "columns"), EXPECTED_COLUMNS.items())
+def test_all_four_spec_tables_are_defined() -> None:
+    assert set(SPEC_COLUMNS) <= set(Base.metadata.tables)
+
+
+def test_no_table_exists_beyond_the_spec_and_the_ingestion_log() -> None:
+    """Keeps table sprawl a decision rather than an accident."""
+    assert set(Base.metadata.tables) == set(SPEC_COLUMNS) | LOG_TABLES
+
+
+@pytest.mark.parametrize(("table", "columns"), SPEC_COLUMNS.items())
 def test_columns_match_the_specification(table: str, columns: set[str]) -> None:
     """Exact equality, not a subset: an extra column is drift from the spec."""
     assert {c.name for c in Base.metadata.tables[table].columns} == columns

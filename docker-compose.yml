@@ -48,6 +48,9 @@ services:
       RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       AUTO_SEED_DEMO: ${AUTO_SEED_DEMO:-true}
       DEMO_SEED_DAYS: ${DEMO_SEED_DAYS:-120}
+      # Scheduled mode only; ignored in demo mode, which never polls.
+      INGESTION_INTERVAL_MINUTES: ${INGESTION_INTERVAL_MINUTES:-60}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10000000}
       # Absent keys are expected: the source degrades to offline, it does not fail.
       AQICN_API_KEY: ${AQICN_API_KEY:-}
       OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}

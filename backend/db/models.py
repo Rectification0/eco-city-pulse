@@ -74,6 +74,11 @@ class DataSource(Base):
     observations: Mapped[list[Observation]] = relationship(
         back_populates="source", cascade="save-update, merge", passive_deletes=True
     )
+    # The log goes with the source: unlike observations, a run record has no
+    # meaning once the source it describes is gone.
+    runs: Mapped[list[IngestionRun]] = relationship(
+        back_populates="source", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     @validates("last_run")
     def _validate_last_run(self, key: str, value: datetime | None) -> datetime | None:
@@ -250,11 +255,127 @@ class Prediction(Base):
         )
 
 
+class RunStatus(str, Enum):
+    """Outcome of one ingestion attempt against one source.
+
+    ``PARTIAL`` and ``FAILED`` are distinct on purpose: partial means the data
+    arrived but some records were unusable, failed means nothing arrived. An
+    administrator needs to tell a bad feed from a dead one (specs §4, Sam).
+    """
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class IngestionRun(Base):
+    """One ingestion attempt — the ingestion log FEAT-01 names as its output.
+
+    Beyond the four tables of specs §9 because the specification requires the
+    log to exist without saying where it lives. It is a run-level record; the
+    individual records that failed validation go to ``quarantined_records``.
+    """
+
+    __tablename__ = "ingestion_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[RunStatus] = mapped_column(
+        SAEnum(
+            RunStatus,
+            name="run_status",
+            native_enum=False,
+            values_callable=lambda enum: [member.value for member in enum],
+        ),
+        nullable=False,
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    # Four counts rather than one: "500 fetched, 500 written" and "500 fetched,
+    # 3 written" are the same run as far as a single total is concerned, and
+    # only one of them is healthy.
+    records_fetched: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    records_valid: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    records_quarantined: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    records_written: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    # Free text for the human reading the admin view: why a run failed, or
+    # which fallback was substituted.
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    source: Mapped[DataSource] = relationship(back_populates="runs")
+    quarantined: Mapped[list[QuarantinedRecord]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    __table_args__ = (
+        Index("ix_ingestion_runs_source_id_started_at", "source_id", started_at.desc()),
+    )
+
+    @validates("started_at", "finished_at")
+    def _validate_times(self, key: str, value: datetime | None) -> datetime | None:
+        return normalize_utc(value, field=key)
+
+    def __repr__(self) -> str:
+        return (
+            f"<IngestionRun id={self.id} source_id={self.source_id} "
+            f"mode={self.mode} status={self.status}>"
+        )
+
+
+class QuarantinedRecord(Base):
+    """A record that failed its source schema, kept with the reason why.
+
+    Quarantine rather than discard (task 2.7): a malformed record is evidence
+    about an upstream feed, and silently dropping it turns a schema change at
+    the provider into an unexplained gap in the data weeks later.
+    """
+
+    __tablename__ = "quarantined_records"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("ingestion_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    # The payload exactly as it arrived, so the failure can be reproduced.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_VARIANT, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+
+    run: Mapped[IngestionRun] = relationship(back_populates="quarantined")
+
+    __table_args__ = (Index("ix_quarantined_records_run_id", "run_id"),)
+
+    def __repr__(self) -> str:
+        return f"<QuarantinedRecord id={self.id} run_id={self.run_id} reason={self.reason!r}>"
+
+
 __all__ = [
     "Base",
     "DataSource",
+    "IngestionRun",
     "MLModel",
     "Observation",
     "Prediction",
+    "QuarantinedRecord",
+    "RunStatus",
     "SourceStatus",
 ]

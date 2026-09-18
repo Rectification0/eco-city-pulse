@@ -28,6 +28,7 @@ docker compose up --build
 |---------|-----|
 | Frontend | <http://localhost:8080> |
 | API health | <http://localhost:8000/api/v1/health> |
+| Source health | <http://localhost:8000/api/v1/data/sources> |
 | District boundaries | <http://localhost:8000/api/v1/data/districts> |
 | API docs (Swagger) | <http://localhost:8000/docs> |
 | PostgreSQL (container) | `localhost:5433` |
@@ -40,7 +41,11 @@ roughly a minute; `docker compose logs -f backend` shows the progress.
 > with a PostgreSQL already installed on the machine. Inside the compose network
 > the backend still reaches it on 5432.
 
-**No API keys are required.** The platform defaults to `INGESTION_MODE=demo` and runs entirely offline — a hard requirement from the spec (DR-1), not a convenience.
+**No API keys are required.** The platform defaults to `INGESTION_MODE=demo` and
+runs entirely offline — a hard requirement from the spec (DR-1), not a
+convenience. A source with no key reports as `offline` and is never contacted;
+traffic falls back to a clearly-labelled synthetic series. Nothing about the
+platform degrades into an error because a third party is unavailable.
 
 ---
 
@@ -76,6 +81,8 @@ rather than silently assumed to be UTC (DR-2, DR-3).
 | `observations` | Harmonized hourly readings | Wide, not key/value: one row is the joined environmental state at a point in space and time, which is what makes lag features well defined |
 | `models` | Model registry | `features_used` is JSONB; metrics and `artifact_path` are written at registration |
 | `predictions` | Issued forecasts | Append-only; `actual_value` is backfilled once the real observation lands, turning the table into a drift-monitoring dataset |
+| `ingestion_runs` | One row per ingestion attempt | Beyond specs §9, because FEAT-01 requires a log without saying where it lives |
+| `quarantined_records` | Records that failed their schema, with the reason | The evidence behind a `degraded` source |
 
 Measurement columns are **nullable on purpose** — missingness is the signal the
 Phase 3 quality engine analyses, so it has to survive the write path. Pollutant
@@ -119,7 +126,7 @@ cleanly and loses only the map features.
 ```bash
 cd backend
 python -m scripts.seed_demo --days 120        # load
-python -m scripts.seed_demo --reset --csv     # reload from scratch, also dump CSV
+python -m scripts.seed_demo --csv             # load, and dump the CSV too
 ```
 
 Runs with **no network access at all** — the Phase 1 exit criterion and AC-2.
@@ -137,8 +144,12 @@ shaped rather than random, because the later phases need structure to find:
 | Rare extreme spikes, left unflagged | The outlier detectors (3.4–3.7) have something to detect |
 
 Values are a function of the timestamp, not of when the generator runs, so
-re-seeding is idempotent: the same hour always produces the same row, and
-duplicates are skipped by the unique constraint rather than overwritten.
+re-seeding is idempotent: the same hour always produces the same row, and the
+upsert updates it in place rather than duplicating it.
+
+Since Phase 2 the script owns no database logic of its own — it calls
+`ingestion_service.run_demo`, so demo data enters through the same pipeline as
+a live API.
 
 ### District boundaries
 
@@ -152,6 +163,115 @@ draws.
 > the city. The file says so in its own `metadata.accuracy`, and that statement
 > is served to the UI with the data. Replace it with an official boundary file
 > before any operational use.
+
+---
+
+## Ingestion
+
+One pipeline, four ways in (FEAT-01, design §6.3). Every mode runs the same
+five stages, differing only in the adapter at the front:
+
+```
+fetch → validate (quarantine failures) → harmonize → upsert → log
+```
+
+Demo mode goes through it too. "Ingestion completes end-to-end in Demo mode
+with every live API disabled" (AC-2) only means something if demo mode
+exercises the real path rather than a private shortcut.
+
+### Modes
+
+| Mode | Trigger | Adapter |
+|------|---------|---------|
+| **Demo** | Container start, or `POST /data/ingest?mode=demo` | Offline generator |
+| **Manual** | `POST /data/ingest` | Live HTTP clients |
+| **Scheduled** | Background task, `INGESTION_MODE=scheduled` | Live HTTP clients |
+| **Upload** | `POST /data/upload` | CSV / JSON parser |
+
+Scheduling is an in-process asyncio task rather than a fourth container: it
+needs no dependency, and an external cron can drive the same work by calling
+`POST /data/ingest`. It starts **only** in `scheduled` mode, so the default
+install makes no outbound request at all.
+
+### Sources
+
+| Source | Provides | Without a key |
+|--------|----------|---------------|
+| **AQICN** | PM2.5, PM10, temperature, humidity | `skipped` — never contacted |
+| **OpenWeather** | Temperature, humidity | `skipped` — never contacted |
+| **TomTom** | Congestion index | Replaced by the **synthetic fallback** |
+
+Two conversions are worth knowing about, because without them the database
+would hold the wrong quantity under the right column name:
+
+- **AQICN reports an AQI index, not µg/m³.** It is inverted through the EPA
+  breakpoint table (`services/adapters/aqi_scale.py`). An AQI of 155 and
+  155 µg/m³ are wildly different amounts of pollution.
+- **TomTom reports speeds, not congestion.** The stored `traffic_score` is
+  `100 × (1 − current ÷ free-flow)`, the same 0–100 index the synthetic
+  fallback produces, so the two are interchangeable downstream.
+
+The synthetic fallback (task 2.2) exists because PM2.5 without traffic loses
+the strongest explanatory variable in the dataset. It is registered under a
+name containing "Synthetic", never claims to be measured, and reuses the demo
+generator's traffic curve so the series stays continuous with seeded history.
+
+### Harmonization (DR-2 … DR-4)
+
+`services/harmonizer.py`, deliberately **without pandas** — ingestion handles a
+stream of records, not a matrix, and the scientific stack belongs in the
+analysis phases.
+
+| Step | Rule |
+|------|------|
+| **Timestamps → UTC** | ISO strings, epoch seconds and datetimes all accepted. A naive value uses an assumption the *caller* states; nothing guesses. |
+| **Coordinates → decimal degrees** | Floats, `28.61N`, `28°36'36"N` and DMS all parse. A latitude marked `E` is rejected as a transposition. Rounded to 5 dp (~1 m) so feed jitter cannot shard one sensor into several. |
+| **Resample → hourly** | Grouped by `(UTC hour, lat, lon)`, each field averaged over the values actually present. Conversion happens *before* flooring — flooring first would truncate in the source's own zone and land off-grid. |
+
+Locations are never averaged together: that would smear the city's spatial
+gradient, which is the thing the map exists to show.
+
+### Quarantine and the log
+
+A record that fails its schema is **stored with the reason**, not dropped. A
+provider changing its payload shape should surface as a visible pile of
+quarantined records rather than an unexplained gap discovered weeks later. One
+bad row never costs the batch — the other rows still load, and the source is
+marked `degraded`.
+
+```bash
+curl localhost:8000/api/v1/data/ingestion/runs | jq
+```
+
+Storage is capped per run (500 records) so a file that is malformed from the
+first byte cannot fill the table; the full count is still reported.
+
+### Writes
+
+`observations` has exactly one writer, `ingestion_service.write_observations`.
+It upserts on `(source_id, timestamp, lat, lon)`:
+
+- a re-ingested hour is **updated in place**, never duplicated;
+- a new NULL never erases a known value — a partial mid-hour fetch must not
+  delete what a complete fetch already wrote;
+- `is_anomaly` is left untouched, because it belongs to the Phase 3 quality
+  engine and re-ingestion must not silently unflag a record (AC-5).
+
+Each source writes its own rows. AQICN rows carry air quality, OpenWeather rows
+carry weather; they are joined at analysis time rather than merged on write, so
+provenance survives.
+
+### Uploading a file
+
+```bash
+curl -X POST localhost:8000/api/v1/data/upload   -F "file=@observations.csv"   -F "assume_timezone_offset_minutes=330"   # 0 = UTC; recorded in the log
+```
+
+Column aliases are accepted — `pm2.5`/`pm2_5`/`pm25`, `lon`/`lng`/`longitude`,
+`rh`/`humidity` — because rejecting a file over header spelling pushes people
+into hand-editing data before uploading it. Blank cells and `NA`/`null`/`-`
+become missing values, which is what Phase 3 is built to handle. Format is
+decided by content, not by the file extension.
 
 ---
 
@@ -206,11 +326,15 @@ pytest -m db                         # only the tests that need PostgreSQL
 pytest -m "not db"                   # everything that runs offline
 ```
 
-Tests are hermetic: the fixtures strip every `Settings` variable from the
-environment, so an exported `POSTGRES_USER` on the developer's machine cannot
-change what the assertions see. The `db`-marked tests run against whatever the
-environment points at, and **skip** — with a message saying whether the server
-is unreachable or simply unmigrated — rather than fail.
+Tests are hermetic in two senses. The fixtures strip every `Settings` variable
+from the environment, so an exported `POSTGRES_USER` cannot change what the
+assertions see, and they blank every upstream API key, so a developer who *has*
+a real AQICN key cannot make the suite call it. No test touches the network.
+
+`db`-marked tests run inside a transaction that is rolled back afterwards, so
+they exercise the real schema — constraints, upsert semantics and all — without
+leaving anything behind. They **skip** when no database answers, with a message
+saying whether the server is unreachable or merely unmigrated.
 
 ---
 
@@ -241,8 +365,12 @@ eco-city-pulse/
 │   │   ├── init/                # Runs once on a fresh volume — enables PostGIS
 │   │   └── migrations/          # Alembic env + versions
 │   ├── services/
+│   │   ├── adapters/            # One module per source + the registry
+│   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
+│   │   ├── ingestion_service.py # The single write path
+│   │   ├── scheduler.py         # Scheduled-mode background task
 │   │   ├── demo_data.py         # Offline demo dataset generator
-│   │   └── geo_service.py       # District boundary access
+│   │   └── geo_service.py       # Districts and station locations
 │   ├── scripts/
 │   │   └── seed_demo.py         # python -m scripts.seed_demo
 │   ├── tests/
@@ -278,6 +406,9 @@ All configuration is environment-driven and parsed once in `backend/core/config.
 | `RUN_MIGRATIONS` | `true` | Apply migrations on container start |
 | `AUTO_SEED_DEMO` | `true` | Seed the demo dataset on start, in demo mode, only when `observations` is empty |
 | `DEMO_SEED_DAYS` | `120` | History generated by the automatic seed |
+| `INGESTION_INTERVAL_MINUTES` | `60` | Scheduled mode only. Hourly, because DR-4 puts every source on an hourly grid |
+| `INGESTION_STARTUP_DELAY_SECONDS` | `30` | Grace period before the first scheduled run |
+| `UPLOAD_MAX_BYTES` | `10000000` | Ceiling for `POST /data/upload`, enforced on bytes actually read |
 
 ---
 
@@ -287,14 +418,22 @@ Base URL `/api/v1`. Every request and response is a Pydantic model — validatio
 is the security boundary (SEC-1). Full contract at
 <http://localhost:8000/docs>.
 
-| Method | Endpoint | Status |
-|--------|----------|--------|
-| `GET` | `/health` | ✅ Phase 0 |
-| `GET` | `/data/districts` | ✅ Phase 1 |
-| `GET` | `/data/sources` | Phase 2 |
-| `POST` | `/eda/profile` | Phase 4 |
-| `POST` | `/eda/reduce` | Phase 6 |
-| `POST` | `/ml/predict` | Phase 9 |
+| Method | Endpoint | Purpose | Status |
+|--------|----------|---------|--------|
+| `GET` | `/health` | Liveness, mode, whether any key is configured | ✅ Phase 0 |
+| `GET` | `/data/districts` | District boundaries as GeoJSON | ✅ Phase 1 |
+| `GET` | `/data/sources` | Sources with ingestion health | ✅ Phase 2 |
+| `POST` | `/data/ingest` | Trigger a run (Manual / Demo) | ✅ Phase 2 |
+| `POST` | `/data/upload` | Ingest a CSV or JSON file | ✅ Phase 2 |
+| `GET` | `/data/ingestion/runs` | The ingestion log | ✅ Phase 2 |
+| `POST` | `/eda/profile` | Univariate + bivariate statistics | Phase 4 |
+| `POST` | `/eda/reduce` | PCA components, variance, loadings | Phase 6 |
+| `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
+
+**`POST /data/ingest` returns 200 even when a source fails.** That is DR-1
+expressed in the API: an unreachable third party degrades that source to
+`offline` and is reported in its outcome, rather than becoming a 5xx for the
+caller. Read the per-source `status` field, not just the HTTP code.
 
 Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 
@@ -310,7 +449,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 |-------|-------|--------|
 | **0** | Project foundation — containers, config, app factory, health, tests | ✅ Complete |
 | **1** | Data layer — schema, migrations, PostGIS, demo seed, district boundaries | ✅ Complete |
-| 2 | Ingestion engine (FEAT-01) | ⬜ |
+| **2** | Ingestion engine — adapters, harmonizer, quarantine, four modes (FEAT-01) | ✅ Complete |
 | 3 | Data quality engine — MICE, outliers | ⬜ |
 | 4 | EDA & statistical engine (FEAT-02) | ⬜ |
 | 5 | Feature engineering | ⬜ |
