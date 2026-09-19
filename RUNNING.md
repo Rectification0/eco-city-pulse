@@ -32,6 +32,104 @@ have not missed a bug — you have not trained yet.
 
 ---
 
+## API keys — you need none
+
+**Zero keys are required.** Every screen you are about to bring up — the map,
+the models, the forecasts, the report — runs on a synthetic dataset generated
+locally from the standard library. Nothing is downloaded.
+
+This is a requirement (DR-1), not a convenience, and the acceptance suite
+enforces it: `test_ac2_demo_mode_needs_no_key_and_contacts_nobody` asserts that
+demo mode is the default, that no key is configured, and that the generator
+imports no HTTP client at all.
+
+Skip the rest of this section unless you specifically want live data.
+
+### The three optional keys
+
+| Env var | Provider | Free tier | Where |
+|---------|----------|-----------|-------|
+| `AQICN_API_KEY` | AQICN / World Air Quality Index — air quality | Free for non-commercial use; email address only | [aqicn.org/data-platform/token](https://aqicn.org/data-platform/token/) |
+| `OPENWEATHER_API_KEY` | OpenWeather — weather | 60 calls/min, 1M/month, no card | [openweathermap.org/api](https://openweathermap.org/api) |
+| `TOMTOM_API_KEY` | TomTom — traffic flow | 2,500 requests/day, 5 calls/sec | [developer.tomtom.com](https://developer.tomtom.com/) |
+
+They are independent — set one, two, or all three.
+
+**Two things that catch people out:**
+
+- **An OpenWeather key does not work immediately.** It is issued instantly but
+  takes roughly 10 minutes to 2 hours to activate on their side. A fresh key
+  returning 401 usually means you were simply too quick, not that you did
+  anything wrong.
+- **AQICN requires attribution** and forbids commercial use or redistribution
+  of the data. Fine for this project; check it before you build on it.
+
+### Where to put them
+
+One file, `.env` at the repository root. It serves both routes — `docker
+compose` reads it directly, and the native backend reads it through
+`core/config.py`, which is the only place in the codebase that touches the
+environment.
+
+```bash
+cp .env.example .env
+```
+
+```ini
+# --- Upstream API keys (all optional) ---
+AQICN_API_KEY=your-aqicn-token
+OPENWEATHER_API_KEY=
+TOMTOM_API_KEY=
+```
+
+`.env` is gitignored. `.env.example` is committed and must stay empty of real
+values — an audit test fails the build if a key is ever pasted into it.
+
+Using Docker? Restart so the new environment is picked up:
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+### What actually changes
+
+A key on its own fetches nothing. Something has to trigger a run:
+
+| You want | Do this |
+|----------|---------|
+| One live fetch, now | `curl -X POST localhost:8000/api/v1/data/ingest` |
+| Polling on a timer | `INGESTION_MODE=scheduled` in `.env`, then restart |
+
+> `POST /data/ingest` defaults to **manual** mode, which attempts every live
+> source — it does not consult `INGESTION_MODE`. That setting controls the
+> *background scheduler*, not the manual trigger.
+
+Without a key, that same call still succeeds: the keyless source degrades to
+`offline` and says so in its own outcome. The endpoint returns **200 even when a
+source fails**, which is DR-1 expressed in the API — read the per-source
+`status`, not the HTTP code.
+
+### Did it work?
+
+Open **Admin**, or:
+
+```bash
+curl -s localhost:8000/api/v1/data/sources | jq '.sources[] | {name, status, credentials_configured}'
+```
+
+A configured source flips from `offline` to `healthy` once it has fetched
+successfully. Without a key, `offline` is the **correct** state — the source is
+configured and deliberately never contacted, not broken.
+
+### Traffic is the special case
+
+If `TOMTOM_API_KEY` is absent, traffic does not simply go missing — a synthetic
+traffic series stands in, labelled as synthetic everywhere it is stored. That is
+why the models still train and the correlations still have something to report
+with no keys at all.
+
+---
+
 ## Which route to take
 
 | | **Docker** | **Native** |
