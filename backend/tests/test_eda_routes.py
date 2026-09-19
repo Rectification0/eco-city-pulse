@@ -1,4 +1,4 @@
-"""EDA endpoints (tasks 4.3, 4.5, 4.7).
+"""EDA endpoints (tasks 4.3, 4.5, 4.7, 6.4, 6.5).
 
 Against a real database inside a rolled-back transaction, because the contract
 worth checking -- that AC-3's four statistics reach the caller for every
@@ -319,6 +319,149 @@ def test_cache_statistics_are_exposed(
     assert set(body) == {"entries", "hits", "misses", "max_entries", "ttl_seconds"}
 
 
+# --- POST /eda/reduce (tasks 6.4, 6.6; AC-6) --------------------------------
+
+
+def test_the_reduce_endpoint_returns_components_variance_and_loadings(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    response = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={"source_ids": [seeded.id], "persist": False},
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    first = body["components"][0]
+    assert 0 < first["explained_variance_ratio"] <= 1
+    assert set(first["loadings"]) == set(MEASUREMENT_COLUMNS)
+    assert first["drivers"][0] in MEASUREMENT_COLUMNS
+
+
+def test_ac6_the_esi_reaches_the_caller_on_a_zero_to_hundred_scale(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    body = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={"source_ids": [seeded.id], "persist": False},
+    ).json()
+
+    esi = body["esi"]
+    assert 0 <= esi["min"] <= esi["max"] <= 100
+    assert esi["latest"] is not None
+
+
+def test_the_reduce_response_says_which_way_pc1_points(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    """A component is defined only up to sign, so the response states the
+    orientation rather than leaving the reader to guess (design §9)."""
+    body = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={"source_ids": [seeded.id], "persist": False},
+    ).json()
+
+    assert body["pc1_oriented_by"] == "pm25"
+    assert isinstance(body["pc1_sign_flipped"], bool)
+
+
+def test_the_reduce_response_carries_its_caveats(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    body = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={"source_ids": [seeded.id], "persist": False},
+    ).json()
+
+    text = " ".join(body["caveats"])
+    assert "ETH-1" in text
+    assert "clipped" in text
+
+
+def test_a_component_count_can_be_requested(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    body = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={"source_ids": [seeded.id], "n_components": 2, "persist": False},
+    ).json()
+
+    assert len(body["components"]) == 2
+
+
+def test_too_narrow_a_window_for_pca_is_a_422_not_a_500(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    response = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={
+            "source_ids": [seeded.id],
+            "start": START.isoformat(),
+            "end": (START + timedelta(hours=4)).isoformat(),
+            "persist": False,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "insufficient_data"
+
+
+def test_persistence_can_be_declined(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    """The artefact of task 6.2 is opt-out, and the response says which it was.
+    (Writing it is covered offline, against a temp directory.)"""
+    body = db_client.post(
+        _url(db_settings, "/eda/reduce"),
+        json={"source_ids": [seeded.id], "persist": False},
+    ).json()
+
+    assert body["artifact_path"] is None
+
+
+# --- POST /eda/tsne (task 6.5) ----------------------------------------------
+
+
+def test_the_tsne_endpoint_returns_a_two_dimensional_scatter(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    body = db_client.post(
+        _url(db_settings, "/eda/tsne"),
+        json={"source_ids": [seeded.id], "max_points": 120},
+    ).json()
+
+    assert body["points"] <= 120
+    assert len(body["x"]) == len(body["y"]) == body["points"]
+    assert len(body["timestamps"]) == body["points"]
+
+
+def test_the_tsne_response_says_the_axes_carry_no_meaning(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    """design §9: t-SNE is EDA-only, and the payload says so rather than
+    leaving it to whoever writes the UI."""
+    body = db_client.post(
+        _url(db_settings, "/eda/tsne"),
+        json={"source_ids": [seeded.id], "max_points": 120},
+    ).json()
+
+    assert "local neighbourhoods" in body["caveat"]
+    assert "never feeds a model" in body["caveat"]
+
+
+def test_an_absurd_point_budget_is_rejected(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    """t-SNE is quadratic; an unbounded request would be a self-inflicted
+    denial of service."""
+    response = db_client.post(
+        _url(db_settings, "/eda/tsne"),
+        json={"source_ids": [seeded.id], "max_points": 500_000},
+    )
+
+    assert response.status_code == 422
+
+
 # --- Contract ---------------------------------------------------------------
 
 
@@ -330,3 +473,12 @@ def test_every_phase_four_route_is_documented(
     assert "/api/v1/eda/profile" in paths
     assert "/api/v1/eda/decompose" in paths
     assert "/api/v1/eda/report" in paths
+
+
+def test_every_phase_six_route_is_documented(
+    db_client: TestClient, db_settings: Settings
+) -> None:
+    paths = db_client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/eda/reduce" in paths
+    assert "/api/v1/eda/tsne" in paths

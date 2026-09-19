@@ -585,6 +585,69 @@ every row it was given.
 
 ---
 
+## Dimensionality reduction & ESI
+
+FEAT-04 (specs §6.2, design §9). A dashboard cannot show five correlated numbers
+and call it a summary, so PCA compresses them into one.
+
+```bash
+curl -X POST localhost:8000/api/v1/eda/reduce | jq   # components, loadings, ESI
+curl -X POST localhost:8000/api/v1/eda/tsne   | jq   # 2D scatter, EDA Studio only
+```
+
+1. **Standardize** every continuous variable. PCA maximises variance and
+   variance is scale-dependent — left in raw units, PM10 (tens to hundreds)
+   would dominate humidity (a percentage) for no reason but its units.
+2. **Fit PCA**, keep the explained variance ratios and the **loadings**.
+3. **Normalize PC1 to 0–100** against the fit window.
+
+### The sign is chosen, not accepted
+
+A principal component is defined only up to sign: the same data yields PC1 or
+its exact negative depending on the LAPACK build, and an index that silently
+inverted between runs would be worse than no index. PC1 is oriented to increase
+with PM2.5, so **high ESI means dirtier air by construction** rather than by
+luck. The response states the orientation and whether the axis had to be
+flipped.
+
+On the demo dataset PC1 loads positively on PM2.5, PM10 and traffic and
+negatively on temperature — a winter-inversion axis, readable directly from the
+numbers.
+
+### What ESI is not
+
+A **relative** position within the window it was fitted on. 80 means "high for
+this city in this period", never "unsafe": the index is not health-calibrated,
+and it makes no claim about what caused the reading (ETH-1). Both disclaimers
+ship inside the payload rather than being left to whoever writes the UI.
+
+Scores are clipped to 0–100, so a reading more extreme than anything in the fit
+window saturates rather than escaping the scale (AC-6). Rows with a missing
+measurement are excluded from the projection and **counted** — PCA has no notion
+of a missing value, and dropping them silently would let an ESI computed from a
+tenth of the window look exactly like one computed from all of it.
+
+The loadings travel with every score (task 6.6), which is what keeps the index
+interpretable rather than a black box; the EDA Studio renders them in Phase 10.
+The fitted model — scaler parameters, components, variance ratios, calibration —
+is written to `data/processed/pca_model.json`, so a stored ESI is still readable
+months later.
+
+### t-SNE is strictly a picture
+
+`POST /eda/tsne` embeds the readings in two dimensions for cluster inspection,
+and **never feeds a model or the ESI** (design §9). That is not a policy choice:
+`TSNE` has `fit_transform` and no `transform`, because a new point has no defined
+position in an embedding optimised for other points.
+
+Local neighbourhoods are meaningful; the distance between clusters, their sizes
+and the orientation of the axes are artefacts of the optimisation. The caveat
+ships in the payload. Points are capped and sampled **evenly across the window**
+— deterministic, so the scatter does not redraw itself on every refresh, and
+bounded, because t-SNE is quadratic.
+
+---
+
 ## Local development
 
 ### Database
@@ -677,7 +740,7 @@ eco-city-pulse/
 │   ├── services/
 │   │   ├── adapters/            # One module per source + the registry
 │   │   ├── quality/             # Missingness, imputation, outliers, pipeline
-│   │   ├── eda/                 # Profile, STL, cache, HTML report
+│   │   ├── eda/                 # Profile, STL, cache, report, PCA/ESI, t-SNE
 │   │   ├── features/            # Spec, temporal, windows, transformer, store
 │   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
 │   │   ├── ingestion_service.py # The single write path
@@ -696,7 +759,7 @@ eco-city-pulse/
 │   └── requirements.txt
 ├── data/
 │   ├── raw/                     # Immutable landing zone — districts.geojson
-│   └── processed/               # Cleaned frame, quality + EDA reports, feature store (generated)
+│   └── processed/               # Cleaned frame, reports, feature store, PCA model (generated)
 ├── docker-compose.yml
 └── README.md
 ```
@@ -748,7 +811,8 @@ is the security boundary (SEC-1). Full contract at
 | `POST` | `/eda/decompose` | STL trend / seasonal / residual | ✅ Phase 4 |
 | `GET` | `/eda/report` | Self-contained HTML EDA report | ✅ Phase 4 |
 | `GET` | `/eda/cache` | Profile cache statistics | ✅ Phase 4 |
-| `POST` | `/eda/reduce` | PCA components, variance, loadings | Phase 6 |
+| `POST` | `/eda/reduce` | PCA components, variance, loadings, ESI | ✅ Phase 6 |
+| `POST` | `/eda/tsne` | t-SNE 2D projection (EDA Studio only) | ✅ Phase 6 |
 | `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
 
 **`POST /data/ingest` returns 200 even when a source fails.** That is DR-1
@@ -774,7 +838,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 | **3** | Data quality engine — missingness, MICE, outlier vote | ✅ Complete |
 | **4** | EDA & statistical engine — profile, STL, cache, report (FEAT-02) | ✅ Complete |
 | **5** | Feature engineering — temporal, lag, rolling, log; one shared transformer | ✅ Complete |
-| 6 | Dimensionality reduction & ESI (FEAT-04) | ⬜ |
+| **6** | Dimensionality reduction & ESI — PCA, loadings, 0–100 index, t-SNE (FEAT-04) | ✅ Complete |
 | 7 | ML pipeline (FEAT-05) | ⬜ |
 | 8 | Explainability — SHAP | ⬜ |
 | 9 | Prediction service (FEAT-06) | ⬜ |
@@ -800,5 +864,5 @@ Only public environmental data is used. Any text analysis aggregates metrics onl
 | Mod 1 | Data Collection & Structure | Multi-source API & CSV ingestion, JSON validation, DB storage |
 | Mod 2 | Data Preprocessing | MCAR/MAR analysis, MICE imputation, IQR / Z-score / Isolation Forest anomaly vote — **implemented** (Phase 3) |
 | Mod 3 | Descriptive Stats & Visualization | Univariate profile, Pearson + Spearman correlation, histograms — **implemented** (Phase 4) |
-| Mod 4 | Dimensionality & Time-Series | STL decomposition with strength measures — **implemented** (Phase 4); PCA-based ESI in Phase 6 |
+| Mod 4 | Dimensionality & Time-Series | STL decomposition with strength measures — **implemented** (Phase 4); PCA-based ESI and t-SNE — **implemented** (Phase 6) |
 | Mod 5 | Advanced Visualization | Self-contained HTML report with inline SVG charts — **implemented** (Phase 4); parallel coordinates in Phase 10 |

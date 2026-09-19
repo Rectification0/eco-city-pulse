@@ -1,4 +1,4 @@
-"""EDA routes — FEAT-02 (tasks 4.3, 4.5, 4.7).
+"""EDA routes — FEAT-02 and FEAT-04 (tasks 4.3, 4.5, 4.7, 6.4, 6.5).
 
 Per design §5 these handlers hold no statistics. They validate the request,
 call ``services.eda``, and shape the response.
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, model_validator
 from api.dependencies import SessionDep, SettingsDep
 from core.exceptions import InsufficientDataError
 from services.datasets import MEASUREMENT_COLUMNS
-from services.eda import cache, decomposition, service
+from services.eda import cache, decomposition, manifold, service
 
 router = APIRouter(prefix="/eda", tags=["eda"])
 
@@ -302,6 +302,170 @@ async def report(
     )
 
 
+# --- Dimensionality reduction and ESI — FEAT-04 (tasks 6.4, 6.5, 6.6) -------
+
+
+class ComponentResponse(BaseModel):
+    index: int
+    explained_variance_ratio: float
+    cumulative_variance_ratio: float
+    loadings: dict[str, float] = Field(
+        description=(
+            "Coefficients over the standardized columns. Shipped with every "
+            "response so the ESI stays interpretable rather than a black box "
+            "(design §9)."
+        )
+    )
+    drivers: list[str] = Field(
+        description="Columns by absolute contribution, strongest first."
+    )
+
+
+class ESISummaryResponse(BaseModel):
+    mean: float | None
+    median: float | None
+    min: float | None
+    max: float | None
+    latest: float | None
+
+
+class ReductionResponse(BaseModel):
+    """AC-6: an ESI on a 0-100 scale, with its loadings inspectable."""
+
+    columns: list[str]
+    rows_used: int
+    rows_dropped: int
+    components: list[ComponentResponse]
+    esi: ESISummaryResponse
+    pc1_oriented_by: str = Field(
+        description=(
+            "A principal component is defined only up to sign, so PC1 is "
+            "oriented to increase with this column. 'High ESI' therefore means "
+            "'dirtier air' by construction rather than by luck."
+        )
+    )
+    pc1_sign_flipped: bool
+    caveats: list[str]
+    cached: bool
+    dataset_version: dict[str, Any]
+    artifact_path: str | None = Field(
+        default=None, description="Where the fitted PCA was written (task 6.2)."
+    )
+
+
+class ReductionRequest(DatasetSelector):
+    n_components: int | None = Field(
+        default=None,
+        ge=1,
+        le=len(MEASUREMENT_COLUMNS),
+        description="Components to retain. Defaults to all of them.",
+    )
+    persist: bool = Field(
+        default=True, description="Also write the fitted PCA to data/processed."
+    )
+
+
+class ProjectionResponse(BaseModel):
+    columns: list[str]
+    x: list[float]
+    y: list[float]
+    timestamps: list[datetime]
+    stations: list[str]
+    hour_of_day: list[int]
+    perplexity: float
+    points: int
+    rows_available: int
+    subsampled: bool
+    caveat: str
+    cached: bool
+    dataset_version: dict[str, Any]
+
+
+class ProjectionRequest(DatasetSelector):
+    perplexity: float = Field(
+        default=manifold.DEFAULT_PERPLEXITY,
+        ge=5.0,
+        le=100.0,
+        description="Neighbourhood size. Clamped below the sample size.",
+    )
+    max_points: int = Field(
+        default=manifold.DEFAULT_MAX_POINTS,
+        ge=manifold.MIN_ROWS,
+        le=5000,
+        description="Points embedded, sampled evenly across the window.",
+    )
+
+
+@router.post(
+    "/reduce",
+    response_model=ReductionResponse,
+    summary="PCA components, explained variance, loadings and the ESI",
+)
+async def reduce(
+    session: SessionDep, settings: SettingsDep, request: ReductionRequest | None = None
+) -> ReductionResponse:
+    """Dimensionality reduction and the Environmental Stress Index (FEAT-04, AC-6).
+
+    Returns 422 when the window holds too few complete rows to estimate a
+    covariance matrix from -- a request problem, and one a wider window fixes.
+    """
+    request = request or ReductionRequest()
+
+    result, version, cached, path = service.reduce_dimensions(
+        session,
+        settings,
+        source_ids=request.source_tuple(),
+        start=request.start,
+        end=request.end,
+        columns=request.resolved_columns(),
+        n_components=request.n_components,
+        use_cache=request.use_cache,
+        persist=request.persist,
+    )
+
+    return ReductionResponse.model_validate(
+        {
+            **result.as_dict(),
+            "cached": cached,
+            "dataset_version": version.as_dict(),
+            "artifact_path": path,
+        }
+    )
+
+
+@router.post(
+    "/tsne",
+    response_model=ProjectionResponse,
+    summary="t-SNE 2D projection — EDA Studio only",
+)
+async def tsne(
+    session: SessionDep, settings: SettingsDep, request: ProjectionRequest | None = None
+) -> ProjectionResponse:
+    """A 2D scatter for cluster inspection (task 6.5, specs §6.2).
+
+    Deliberately has no counterpart in any inference path: t-SNE has no stable
+    out-of-sample transform, so these coordinates are a picture and never a
+    feature (design §9). The caveat travels in the payload.
+    """
+    request = request or ProjectionRequest()
+
+    result, version, cached = service.project_tsne(
+        session,
+        settings,
+        source_ids=request.source_tuple(),
+        start=request.start,
+        end=request.end,
+        columns=request.resolved_columns(),
+        perplexity=request.perplexity,
+        max_points=request.max_points,
+        use_cache=request.use_cache,
+    )
+
+    return ProjectionResponse.model_validate(
+        {**result.as_dict(), "cached": cached, "dataset_version": version.as_dict()}
+    )
+
+
 class CacheStatsResponse(BaseModel):
     entries: int
     hits: int
@@ -325,5 +489,9 @@ __all__ = [
     "DecompositionRequest",
     "InsufficientDataError",
     "ProfileResponse",
+    "ProjectionRequest",
+    "ProjectionResponse",
+    "ReductionRequest",
+    "ReductionResponse",
     "router",
 ]

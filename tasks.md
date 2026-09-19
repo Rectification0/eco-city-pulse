@@ -121,13 +121,13 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 6.1 | Standardize continuous variables (`StandardScaler`) ahead of PCA | specs §6.2 | M | [ ] |
-| 6.2 | Fit PCA; persist explained variance ratios and component **loadings** | FEAT-04 | S | [ ] |
-| 6.3 | Extract **PC1** and normalize to a **0–100** ESI score | FEAT-04, AC-6 | S | [ ] |
-| 6.4 | `POST /api/v1/eda/reduce` — PCA components, explained variance, loadings | specs §8 | M | [ ] |
-| 6.5 | **t-SNE** 2D projection — **EDA Studio only**, never in an inference path | specs §6.2 | S | [ ] |
-| 6.6 | Expose PC1 loadings to the UI so ESI stays interpretable | design §9 | S | [ ] |
-| 6.7 | Tests: ESI bounded within 0–100; PCA reproducible under a fixed seed | AC-6 | S | [ ] |
+| 6.1 | Standardize continuous variables (`StandardScaler`) ahead of PCA | specs §6.2 | M | [x] |
+| 6.2 | Fit PCA; persist explained variance ratios and component **loadings** | FEAT-04 | S | [x] |
+| 6.3 | Extract **PC1** and normalize to a **0–100** ESI score | FEAT-04, AC-6 | S | [x] |
+| 6.4 | `POST /api/v1/eda/reduce` — PCA components, explained variance, loadings | specs §8 | M | [x] |
+| 6.5 | **t-SNE** 2D projection — **EDA Studio only**, never in an inference path | specs §6.2 | S | [x] |
+| 6.6 | Expose PC1 loadings to the UI so ESI stays interpretable | design §9 | S | [x] |
+| 6.7 | Tests: ESI bounded within 0–100; PCA reproducible under a fixed seed | AC-6 | S | [x] |
 
 **Exit criteria:** ESI returned on a 0–100 scale derived from PCA PC1, with loadings inspectable. *(AC-6)*
 
