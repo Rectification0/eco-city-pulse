@@ -501,6 +501,90 @@ dashboard does.
 
 ---
 
+## Feature engineering
+
+specs §6.1 / design §8. Twelve columns, built by **one** transformer that both
+training and serving call.
+
+```bash
+cd backend && python -m scripts.build_features        # writes data/processed/features.csv
+```
+
+| Group | Features |
+|-------|----------|
+| Temporal | `hour_of_day` · `day_of_week` · `is_weekend` · `month` · `season` |
+| Lag | `pm25_lag_1h` · `pm25_lag_24h` · `temp_lag_3h` |
+| Rolling | `pm25_rolling_mean_24h` · `traffic_score_rolling_std_6h` |
+| Transform | `pm25_log` · `pm10_log` — added only when the skew test says they earn their place |
+
+Named after the schema (`pm25`) rather than the requirement's prose
+(`PM2.5_lag_1h`): a feature name that does not match its source column is a
+rename waiting to be got wrong.
+
+### The hourly grid
+
+design §8: "without a uniform grid, `lag_1h` is not a well-defined shift".
+Ingestion puts every source on an hourly grid (DR-4), but a grid can still have
+**holes** — an hour with no reading produces no row. `shift(1)` moves by one
+*row*, so across a six-hour outage it would label a reading from six hours ago
+as `pm25_lag_1h`: a wrong number with a right-looking name, which no downstream
+assertion would catch.
+
+So each station's series is reindexed onto a complete hourly range first. Absent
+hours become NaN, the shift becomes a true time shift, and a lag that reaches
+over a gap comes back **NaN** — the honest answer, rather than whatever the
+sensor last reported.
+
+### Local time, not UTC
+
+Timestamps stay UTC in the database (DR-2), but `hour_of_day` is a claim about
+human activity. In IST the evening peak sits near 19:00 local — 13:30 UTC — so a
+UTC-derived hour puts rush hour mid-afternoon and splits every weekday across two
+dates. The offset (+05:30, no DST) lives *inside* the feature spec, so the value
+used in training is the value replayed at inference.
+
+Seasons follow the regional calendar rather than meteorological quarters:
+**post-monsoon (Oct–Nov)** is the stubble-burning, low-inversion window that
+dominates North Indian PM2.5, and a Sep–Nov "autumn" would split it in two.
+
+### One transformer, two paths
+
+The phase exists to make one guarantee: *every feature at time t is a function of
+that station's observations in `[t − history, t]` and of t itself, and nothing
+else.* Three decisions follow from it, and each one costs something:
+
+| Decision | Why | Cost |
+|----------|-----|------|
+| **No MICE in the feature path** | MICE fits across a whole slice, so the same hour gets different values from a year of training data than from a two-day serving window. Only window-local forward fill is used. | A gap too long to repair locally surfaces as NaN instead of a number |
+| **Windows reduced from their own contents** | pandas' rolling aggregates run an incremental accumulator whose rounding error depends on how many rows preceded the window — so the same hour can differ in its last bits between the two paths | ~2 orders of magnitude on that step; `exact_windows=False` buys the speed back |
+| **The log decision is frozen at fit time** | Recomputing skew on a serving window would answer differently than the training set did | The spec must travel with the model artefact |
+
+The payoff is a claim that can be checked, so it is checked literally: build the
+features over 400 hours, build them again over the trailing window a prediction
+request would load, and compare the two rows **after serialisation**
+(`test_the_two_paths_serialise_to_identical_bytes`).
+
+Nothing reads forward, and that is asserted as a property rather than by
+inspection: rewrite every observation after hour 60 and every feature at or
+before hour 60 must be bit-for-bit unchanged (AC-8).
+
+### The feature store
+
+Three files in `data/processed/`, written together on purpose — a feature file
+without the definition that built it is a set of unlabelled numbers:
+
+| File | Contents |
+|------|----------|
+| `features.csv` | The engineered frame |
+| `feature_spec.json` | The fitted transformer: spec, fingerprint, fit window, and the skew evidence behind every log decision |
+| `feature_manifest.json` | Rows, completeness, per-feature null counts, dataset fingerprint |
+
+Warm-up rows (the first 24 hours of each station) keep their NaNs. Which rows a
+model may use is Phase 7's decision, not this layer's — the transform returns
+every row it was given.
+
+---
+
 ## Local development
 
 ### Database
@@ -594,6 +678,7 @@ eco-city-pulse/
 │   │   ├── adapters/            # One module per source + the registry
 │   │   ├── quality/             # Missingness, imputation, outliers, pipeline
 │   │   ├── eda/                 # Profile, STL, cache, HTML report
+│   │   ├── features/            # Spec, temporal, windows, transformer, store
 │   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
 │   │   ├── ingestion_service.py # The single write path
 │   │   ├── datasets.py          # The pandas boundary
@@ -602,7 +687,8 @@ eco-city-pulse/
 │   │   └── geo_service.py       # Districts and station locations
 │   ├── scripts/
 │   │   ├── seed_demo.py         # python -m scripts.seed_demo
-│   │   └── run_quality.py       # python -m scripts.run_quality
+│   │   ├── run_quality.py       # python -m scripts.run_quality
+│   │   └── build_features.py    # python -m scripts.build_features
 │   ├── tests/
 │   ├── alembic.ini
 │   ├── entrypoint.sh            # Migrate, seed if empty, then serve
@@ -610,7 +696,7 @@ eco-city-pulse/
 │   └── requirements.txt
 ├── data/
 │   ├── raw/                     # Immutable landing zone — districts.geojson
-│   └── processed/               # Cleaned frame, quality + EDA reports (generated)
+│   └── processed/               # Cleaned frame, quality + EDA reports, feature store (generated)
 ├── docker-compose.yml
 └── README.md
 ```
@@ -687,7 +773,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 | **2** | Ingestion engine — adapters, harmonizer, quarantine, four modes (FEAT-01) | ✅ Complete |
 | **3** | Data quality engine — missingness, MICE, outlier vote | ✅ Complete |
 | **4** | EDA & statistical engine — profile, STL, cache, report (FEAT-02) | ✅ Complete |
-| 5 | Feature engineering | ⬜ |
+| **5** | Feature engineering — temporal, lag, rolling, log; one shared transformer | ✅ Complete |
 | 6 | Dimensionality reduction & ESI (FEAT-04) | ⬜ |
 | 7 | ML pipeline (FEAT-05) | ⬜ |
 | 8 | Explainability — SHAP | ⬜ |

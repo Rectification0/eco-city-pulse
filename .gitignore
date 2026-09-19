@@ -36,7 +36,8 @@ pnpm-debug.log*
 
 # --- Data (raw/processed are generated or large; keep dirs via .gitkeep) ---
 # data/processed holds generated analysis output: the quality engine's cleaned
-# frame and report (task 3.8), and the EDA report (task 4.7). All of it is
+# frame and report (task 3.8), the EDA report (task 4.7), and the feature store
+# -- features.csv plus its spec and manifest (task 5.6). All of it is
 # reproducible from the database, so none of it is committed.
 data/raw/*
 data/processed/*

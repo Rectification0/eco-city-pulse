@@ -105,13 +105,13 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 5.1 | Temporal features — `hour_of_day`, `day_of_week`, `is_weekend`, `month`, `season` | specs §6.1 | M | [ ] |
-| 5.2 | Lag features — `PM2.5_lag_1h`, `PM2.5_lag_24h`, `Temp_lag_3h` | specs §6.1 | M | [ ] |
-| 5.3 | Rolling statistics — `PM2.5_rolling_mean_24h`, `traffic_rolling_std_6h` | specs §6.1 | M | [ ] |
-| 5.4 | Log transformation on highly skewed pollutants (CO, SO2) | specs §6.1 | M | [ ] |
-| 5.5 | Single deterministic transformer shared by training **and** inference (no drift between paths) | design §8 | M | [ ] |
-| 5.6 | Feature-store persistence of engineered features | design §2 | S | [ ] |
-| 5.7 | Tests: lag correctness on a known series; no forward-looking leakage in rolling windows | AC-8 | M | [ ] |
+| 5.1 | Temporal features — `hour_of_day`, `day_of_week`, `is_weekend`, `month`, `season` | specs §6.1 | M | [x] |
+| 5.2 | Lag features — `PM2.5_lag_1h`, `PM2.5_lag_24h`, `Temp_lag_3h` | specs §6.1 | M | [x] |
+| 5.3 | Rolling statistics — `PM2.5_rolling_mean_24h`, `traffic_rolling_std_6h` | specs §6.1 | M | [x] |
+| 5.4 | Log transformation on highly skewed pollutants (CO, SO2) | specs §6.1 | M | [x] |
+| 5.5 | Single deterministic transformer shared by training **and** inference (no drift between paths) | design §8 | M | [x] |
+| 5.6 | Feature-store persistence of engineered features | design §2 | S | [x] |
+| 5.7 | Tests: lag correctness on a known series; no forward-looking leakage in rolling windows | AC-8 | M | [x] |
 
 **Exit criteria:** feature set reproducible and byte-identical between training and inference paths.
 
