@@ -14,6 +14,7 @@ Data Collection → Data Engineering → EDA → Statistical Analysis → Visual
 | [`specs.md`](./specs.md) | Requirements, personas, API contract, acceptance criteria |
 | [`design.md`](./design.md) | Architecture, schema, pipeline design, decision rationale |
 | [`tasks.md`](./tasks.md) | 12-phase implementation plan with requirement traceability |
+| [`RUNNING.md`](./RUNNING.md) | **Start here to run it** — both routes, verification, troubleshooting |
 | [`CLAUDE.md`](./CLAUDE.md) | Conventions and per-phase workflow for contributors |
 
 > Design rationale lives in `design.md` and in the module docstrings, not here.

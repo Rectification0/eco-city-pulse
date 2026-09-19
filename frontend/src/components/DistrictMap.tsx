@@ -60,6 +60,10 @@ export default function DistrictMap({
         scrollWheelZoom={false}
         className="h-[26rem] w-full rounded-lg"
         style={{ backgroundColor: '#0f172a' }}
+        // The charts get their label from Plot's required `ariaLabel` prop;
+        // Leaflet has no equivalent, so it is set here. The band legend below
+        // and the per-district tooltips carry the values themselves.
+        aria-label={`Map of current PM2.5 by district, ${readings.length} monitoring stations`}
       >
         {/*
           OpenStreetMap's own tiles, darkened with a CSS filter rather than a
