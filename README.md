@@ -102,6 +102,7 @@ python -m scripts.seed_demo --days 120   # offline demo dataset
 python -m scripts.run_quality            # impute, flag anomalies
 python -m scripts.build_features         # engineered feature store
 python -m scripts.train_models           # train + register the model ladder
+python -m scripts.export_docs --report   # API reference + EDA report → docs/
 ```
 
 ---
@@ -149,8 +150,14 @@ cd backend
 pytest                 # full suite; db tests skip if no database is reachable
 pytest -m db           # only the tests needing PostgreSQL
 pytest -m "not db"     # everything that runs offline
+pytest tests/test_acceptance.py -v      # AC-1 … AC-11, one test each
+pytest tests/test_audit_*.py            # the SEC/PRIV/ETH audits
 ruff check --select F,I,E9 .
 ```
+
+The audits are **executable**, not a checklist: an endpoint added without a
+response model, a credential pasted into a compose file, a `allow_origins=["*"]`,
+a PII-shaped column, or a caption that claims causation each fail the suite.
 
 Fixtures strip every `Settings` variable from the environment and blank every
 upstream API key, so no test can be influenced by — or reach — the outside
@@ -274,7 +281,7 @@ Errors share one envelope from `core/exceptions.py`:
 | **8** | Explainability — SHAP, additive per model | ✅ Complete |
 | **9** | Prediction service — conformal intervals, persisted forecasts (FEAT-06) | ✅ Complete |
 | **10** | Frontend — Dashboard, EDA Studio, Model Lab, Admin | ✅ Complete |
-| 11 | Security, quality & release | ⬜ |
+| **11** | Security, quality & release — audits as tests, AC walkthrough | ✅ Complete |
 
 Track detail in [`tasks.md`](./tasks.md).
 

@@ -60,6 +60,15 @@ artifacts/
 reports/*.html
 reports/*.pdf
 
+# --- Release artefacts (task 11.9) ---
+# Both are produced by `python -m scripts.export_docs`: the API reference is
+# generated from the running app, and the EDA report from the database. A
+# generated file in version control drifts from its source and conflicts on
+# every merge, so the command is the deliverable rather than its output.
+docs/openapi.json
+docs/*.html
+docs/*.pdf
+
 # --- Editors / OS / tooling ---
 .vscode/
 .idea/

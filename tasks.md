@@ -215,15 +215,15 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 11.1 | Audit: every endpoint request/response is a Pydantic model | SEC-1 | M | [ ] |
-| 11.2 | Audit: no secret in source, image, or compose file — env vars only | SEC-2 | M | [ ] |
-| 11.3 | Audit: CORS allowlist limited to the frontend origin | SEC-3 | M | [ ] |
-| 11.4 | Audit: only public environmental data ingested; text analysis aggregates only, **no PII** | PRIV-1, PRIV-2 | M | [ ] |
-| 11.5 | Audit: no causal claim anywhere in copy, labels, or reports | ETH-1 | M | [ ] |
-| 11.6 | Integration test — full path from ingestion through prediction in Demo mode | AC-1…AC-11 | M | [ ] |
-| 11.7 | Syllabus traceability review — confirm Modules 1–5 are each demonstrably implemented | specs §13 | M | [ ] |
-| 11.8 | Acceptance walkthrough against all of AC-1 … AC-11 | specs §14 | M | [ ] |
-| 11.9 | Final documentation — README, API reference, EDA report artifacts | — | M | [ ] |
+| 11.1 | Audit: every endpoint request/response is a Pydantic model | SEC-1 | M | [x] |
+| 11.2 | Audit: no secret in source, image, or compose file — env vars only | SEC-2 | M | [x] |
+| 11.3 | Audit: CORS allowlist limited to the frontend origin | SEC-3 | M | [x] |
+| 11.4 | Audit: only public environmental data ingested; text analysis aggregates only, **no PII** | PRIV-1, PRIV-2 | M | [x] |
+| 11.5 | Audit: no causal claim anywhere in copy, labels, or reports | ETH-1 | M | [x] |
+| 11.6 | Integration test — full path from ingestion through prediction in Demo mode | AC-1…AC-11 | M | [x] |
+| 11.7 | Syllabus traceability review — confirm Modules 1–5 are each demonstrably implemented | specs §13 | M | [x] |
+| 11.8 | Acceptance walkthrough against all of AC-1 … AC-11 | specs §14 | M | [x] |
+| 11.9 | Final documentation — README, API reference, EDA report artifacts | — | M | [x] |
 
 ---
 
