@@ -393,6 +393,114 @@ union of every run ever made. Unflagging changes a judgement, never the data.
 
 ---
 
+## EDA & statistics
+
+BACSE301 Modules 3–5 (FEAT-02). Everything here describes the data; nothing
+here claims to explain it.
+
+```bash
+curl -X POST localhost:8000/api/v1/eda/profile   | jq   # statistics
+curl -X POST localhost:8000/api/v1/eda/decompose | jq   # STL
+curl localhost:8000/api/v1/eda/report -o report.html    # the document
+```
+
+### The profile
+
+| Layer | What it answers |
+|-------|-----------------|
+| **Univariate** | Centre, spread, shape and completeness per column: mean, median, std, IQR, 5th/95th percentile, skew, excess kurtosis, missingness (AC-3) |
+| **Bivariate** | Pearson **and** Spearman, plus the overlap each pair was computed on |
+| **Distribution** | Whether a column is skewed enough to want a log transform, and whether the transform actually helps |
+
+**Both correlation methods, always.** They answer different questions and
+disagree informatively: Pearson measures linear association and is pulled hard
+by outliers; Spearman measures monotone association on ranks and is not. A
+large Spearman beside a small Pearson means the relationship is monotone but
+curved — which a linear model will under-fit. Each pair reports its
+`divergence` so that case is easy to spot.
+
+**Every coefficient carries its sample size.** A correlation from 40
+overlapping rows and one from 30,000 are different claims, and a bare number
+hides which you have.
+
+**The log-transform recommendation is verified, not assumed.** The transform is
+applied, the skew recomputed, and it is recommended only when the magnitude
+actually falls materially. A log transform costs interpretability —
+coefficients stop being in µg/m³ — so it has to buy something. On the current
+demo window nothing qualifies: PM2.5 and PM10 sit near 0.8 skew, below the 1.0
+threshold. specs §6.1 names CO and SO2 as the motivating case, and neither is
+in the specs §9 schema.
+
+### Time-series decomposition
+
+STL on one station's series, separating **trend / seasonal / residual** — which
+is what turns "PM2.5 was 180 last night" into how much was the seasonal
+baseline, how much the ordinary evening peak, and how much was genuinely
+unusual.
+
+Three things STL needs that raw observations do not provide, each handled
+explicitly rather than assumed:
+
+- **One series.** A decomposition of stacked stations is meaningless, so a
+  station is chosen (the one with the most data) or named.
+- **A gap-free grid.** Absent hours are reindexed in and interpolated, and the
+  **count of interpolated points is reported** — a decomposition resting on 30%
+  invented data says so, and carries a caveat above 10%.
+- **Enough history.** Fewer than three full cycles is refused rather than
+  fitted; a confident-looking trend from two days is worse than an error.
+
+Both **strength measures** (Hyndman–Athanasopoulos) come back on 0–1: the share
+of variation each component explains beyond the noise. They make two series
+comparable in a way raw component amplitudes do not.
+
+> statsmodels ships STL as a compiled extension, so it is imported lazily. On a
+> machine where the OS refuses to load it, the endpoint returns 503 and the rest
+> of the engine keeps working rather than the application failing at startup.
+> This is not hypothetical — it happened on the development machine mid-phase.
+
+### Caching
+
+design §11 asks for a cache whose keys include the dataset version "so results
+never go stale silently". The **dataset version** is a fingerprint of the slice:
+row count, max id, newest timestamp, and flagged-row count. One aggregate query,
+and it moves whenever the data does — an ingestion run changes the count and the
+max id, a quality run changes the flag count. A cached entry is therefore
+*unreachable* once its data has changed, not merely unlikely to be served.
+
+Measured on the demo dataset: **0.94 s cold, 0.006 s warm.** It is an in-process
+LRU with a TTL, not Redis — the deployment is three containers (specs §12), and
+a fourth for a cache in front of a second-scale computation would be poor value.
+The honest consequence: with several workers each holds its own cache, so the
+hit rate falls but correctness does not, because the key still pins the data.
+
+### The report
+
+`GET /eda/report` renders one **self-contained HTML file** — inline CSS, inline
+SVG, no scripts, no CDN, nothing to fetch. It opens from a USB stick and
+survives being emailed, which is the same offline promise DR-1 makes about the
+data itself.
+
+Charts follow a validated palette: one hue for magnitude, a **blue↔red diverging
+ramp with a grey midpoint** for correlation (which has a sign, so a one-hue ramp
+would hide the difference between −0.8 and +0.8), thin marks, recessive grid,
+and **every heatmap cell labelled** — a heatmap read by colour alone is
+unreadable in greyscale, in print, and for a colour-blind reader. The STL panels
+share one scale per panel, because two lines each normalised to their own range
+is a dual-axis chart in disguise. Light and dark are each stepped for their own
+surface.
+
+**PDF** comes from the browser: the report carries a print stylesheet with
+page-break rules, so Print → Save as PDF produces a clean paginated document. A
+server-side renderer (WeasyPrint) would add ~100 MB of system libraries to the
+image for a Should-Have feature; `report.to_pdf()` uses it if it happens to be
+installed and says exactly that when it is not.
+
+The report closes with the ETH-1 disclaimer, verbatim, from the same constant
+the UI will use (task 10.16) — an exported document travels further than the
+dashboard does.
+
+---
+
 ## Local development
 
 ### Database
@@ -485,6 +593,7 @@ eco-city-pulse/
 │   ├── services/
 │   │   ├── adapters/            # One module per source + the registry
 │   │   ├── quality/             # Missingness, imputation, outliers, pipeline
+│   │   ├── eda/                 # Profile, STL, cache, HTML report
 │   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
 │   │   ├── ingestion_service.py # The single write path
 │   │   ├── datasets.py          # The pandas boundary
@@ -501,7 +610,7 @@ eco-city-pulse/
 │   └── requirements.txt
 ├── data/
 │   ├── raw/                     # Immutable landing zone — districts.geojson
-│   └── processed/               # Cleaned frame + quality report (generated)
+│   └── processed/               # Cleaned frame, quality + EDA reports (generated)
 ├── docker-compose.yml
 └── README.md
 ```
@@ -549,7 +658,10 @@ is the security boundary (SEC-1). Full contract at
 | `POST` | `/data/upload` | Ingest a CSV or JSON file | ✅ Phase 2 |
 | `GET` | `/data/ingestion/runs` | The ingestion log | ✅ Phase 2 |
 | `POST` | `/data/quality` | Impute, detect anomalies, flag | ✅ Phase 3 |
-| `POST` | `/eda/profile` | Univariate + bivariate statistics | Phase 4 |
+| `POST` | `/eda/profile` | Univariate, bivariate and distribution statistics | ✅ Phase 4 |
+| `POST` | `/eda/decompose` | STL trend / seasonal / residual | ✅ Phase 4 |
+| `GET` | `/eda/report` | Self-contained HTML EDA report | ✅ Phase 4 |
+| `GET` | `/eda/cache` | Profile cache statistics | ✅ Phase 4 |
 | `POST` | `/eda/reduce` | PCA components, variance, loadings | Phase 6 |
 | `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
 
@@ -574,7 +686,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 | **1** | Data layer — schema, migrations, PostGIS, demo seed, district boundaries | ✅ Complete |
 | **2** | Ingestion engine — adapters, harmonizer, quarantine, four modes (FEAT-01) | ✅ Complete |
 | **3** | Data quality engine — missingness, MICE, outlier vote | ✅ Complete |
-| 4 | EDA & statistical engine (FEAT-02) | ⬜ |
+| **4** | EDA & statistical engine — profile, STL, cache, report (FEAT-02) | ✅ Complete |
 | 5 | Feature engineering | ⬜ |
 | 6 | Dimensionality reduction & ESI (FEAT-04) | ⬜ |
 | 7 | ML pipeline (FEAT-05) | ⬜ |
@@ -601,6 +713,6 @@ Only public environmental data is used. Any text analysis aggregates metrics onl
 |--------|-------|----------------|
 | Mod 1 | Data Collection & Structure | Multi-source API & CSV ingestion, JSON validation, DB storage |
 | Mod 2 | Data Preprocessing | MCAR/MAR analysis, MICE imputation, IQR / Z-score / Isolation Forest anomaly vote — **implemented** (Phase 3) |
-| Mod 3 | Descriptive Stats & Visualization | Automated EDA dashboard — histograms, boxplots, correlation heatmaps |
-| Mod 4 | Dimensionality & Time-Series | PCA-based Environmental Stress Index, STL decomposition |
-| Mod 5 | Advanced Visualization | Parallel coordinates, missingness matrix, automated HTML/PDF reports |
+| Mod 3 | Descriptive Stats & Visualization | Univariate profile, Pearson + Spearman correlation, histograms — **implemented** (Phase 4) |
+| Mod 4 | Dimensionality & Time-Series | STL decomposition with strength measures — **implemented** (Phase 4); PCA-based ESI in Phase 6 |
+| Mod 5 | Advanced Visualization | Self-contained HTML report with inline SVG charts — **implemented** (Phase 4); parallel coordinates in Phase 10 |

@@ -88,14 +88,14 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 4.1 | `eda_service.py` — univariate profile: mean, median, IQR, std, skewness, kurtosis, missingness | FEAT-02, AC-3 | M | [ ] |
-| 4.2 | Bivariate profile — correlation matrix (Pearson + Spearman) | FEAT-02 | M | [ ] |
-| 4.3 | `POST /api/v1/eda/profile` returning the full JSON stats payload | specs §8, AC-3 | M | [ ] |
-| 4.4 | Distribution/skewness analysis identifying pollutants needing log transform | specs §6.1 | M | [ ] |
-| 4.5 | **STL decomposition** (statsmodels) — trend / seasonal / residual series for PM2.5 | Mod 4 | M | [ ] |
-| 4.6 | Caching layer in front of profile computation, keyed by dataset version | design §11 | S | [ ] |
-| 4.7 | Automated **HTML / PDF** EDA report generation | Mod 5 | S | [ ] |
-| 4.8 | Tests: profile covers every numeric column; statistics verified against known fixtures | AC-3 | M | [ ] |
+| 4.1 | `eda_service.py` — univariate profile: mean, median, IQR, std, skewness, kurtosis, missingness | FEAT-02, AC-3 | M | [x] |
+| 4.2 | Bivariate profile — correlation matrix (Pearson + Spearman) | FEAT-02 | M | [x] |
+| 4.3 | `POST /api/v1/eda/profile` returning the full JSON stats payload | specs §8, AC-3 | M | [x] |
+| 4.4 | Distribution/skewness analysis identifying pollutants needing log transform | specs §6.1 | M | [x] |
+| 4.5 | **STL decomposition** (statsmodels) — trend / seasonal / residual series for PM2.5 | Mod 4 | M | [x] |
+| 4.6 | Caching layer in front of profile computation, keyed by dataset version | design §11 | S | [x] |
+| 4.7 | Automated **HTML / PDF** EDA report generation | Mod 5 | S | [x] |
+| 4.8 | Tests: profile covers every numeric column; statistics verified against known fixtures | AC-3 | M | [x] |
 
 **Exit criteria:** `/eda/profile` returns mean, median, IQR, and missingness for every numeric column. *(AC-3)*
 

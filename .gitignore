@@ -35,9 +35,9 @@ yarn-error.log*
 pnpm-debug.log*
 
 # --- Data (raw/processed are generated or large; keep dirs via .gitkeep) ---
-# data/processed holds the quality engine's output -- the cleaned frame and
-# its report (task 3.8). Both are reproducible from the database, so neither
-# is committed.
+# data/processed holds generated analysis output: the quality engine's cleaned
+# frame and report (task 3.8), and the EDA report (task 4.7). All of it is
+# reproducible from the database, so none of it is committed.
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
@@ -55,7 +55,7 @@ artifacts/
 *.joblib
 *.onnx
 
-# --- Generated EDA reports ---
+# --- Generated EDA reports (the canonical location is data/processed) ---
 reports/*.html
 reports/*.pdf
 
