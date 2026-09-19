@@ -7,3 +7,29 @@
     @apply bg-slate-950 text-slate-100 antialiased;
   }
 }
+
+@layer components {
+  /* Darkens the raster basemap without touching the vector overlays, which are
+     SVG siblings rather than children of the tile pane. */
+  .map-basemap {
+    filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.6);
+  }
+
+  .leaflet-container {
+    background: #0f172a;
+  }
+
+  /* Leaflet's controls and attribution ship light-themed. */
+  .leaflet-control-attribution {
+    background: rgba(15, 23, 42, 0.85) !important;
+    color: #64748b !important;
+  }
+  .leaflet-control-attribution a {
+    color: #94a3b8 !important;
+  }
+  .leaflet-bar a {
+    background: #1e293b !important;
+    color: #e2e8f0 !important;
+    border-color: #334155 !important;
+  }
+}

@@ -215,12 +215,17 @@ def test_an_out_of_range_horizon_is_rejected(
 # --- GET /ml/models ---------------------------------------------------------
 
 
-def test_the_registry_is_empty_before_anything_is_trained(
+def test_the_registry_lists_rows_in_the_documented_shape(
     ml_client: TestClient, ml_settings: Settings
 ) -> None:
+    """Asserted as a property of whatever is registered, not as "the registry is
+    empty" — a developer's database legitimately holds models from earlier runs,
+    and a test that depends on a virgin database only passes by luck."""
     body = ml_client.get(_url(ml_settings, "/ml/models")).json()
 
-    assert body == []
+    assert isinstance(body, list)
+    for entry in body:
+        assert {"id", "name", "target", "mae", "artifact_path"} <= set(entry)
 
 
 def test_a_persisted_run_reaches_the_registry(
@@ -247,12 +252,15 @@ def test_the_registry_can_be_filtered_by_target(
     matching = ml_client.get(
         _url(ml_settings, "/ml/models"), params={"target": "pm25_h1"}
     ).json()
-    other = ml_client.get(
-        _url(ml_settings, "/ml/models"), params={"target": "pm25_h24"}
+    absent = ml_client.get(
+        _url(ml_settings, "/ml/models"), params={"target": "pm25_h999"}
     ).json()
 
     assert matching
-    assert other == []
+    # The filter's actual contract: everything returned matches what was asked
+    # for. Counting rows would depend on what else the database already holds.
+    assert all(entry["target"] == "pm25_h1" for entry in matching)
+    assert absent == []
 
 
 def test_the_registry_lists_the_whole_ladder_not_just_the_winner(
@@ -499,10 +507,14 @@ def test_the_forecast_reaches_the_predictions_table(
 def test_predicting_an_untrained_horizon_is_a_409(
     ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
 ) -> None:
-    """Fixed by training, not by changing the request — hence 409, not 422."""
+    """Fixed by training, not by changing the request — hence 409, not 422.
+
+    A horizon nothing trains by default, so the test does not quietly depend on
+    the developer's database lacking a 24-hour model.
+    """
     _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
 
-    response = _predict(ml_client, ml_settings, *station, horizon=24)
+    response = _predict(ml_client, ml_settings, *station, horizon=168)
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "model_not_trained"

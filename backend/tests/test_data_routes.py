@@ -9,13 +9,14 @@ service layer has actually written a run.
 from __future__ import annotations
 
 import io
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from core.config import Settings
-from services import ingestion_service
+from services import geo_service, ingestion_service
 from services.adapters import aqicn, openweather, tomtom
 
 pytestmark = pytest.mark.db
@@ -462,3 +463,120 @@ def test_the_quality_response_reports_mice_convergence(
     imputation = body["imputation"]
     assert imputation["stations_imputed"] >= 1
     assert imputation["stations_not_converged"] <= imputation["stations_imputed"]
+
+
+# --- Current readings (Phase 10) --------------------------------------------
+#
+# These two reads exist because building the frontend found nothing that served
+# an *observation*: the profile returns statistics, the ESI an index, predict a
+# forecast. The dashboard's hero tile (10.3) and map gradient (10.4) need what
+# the sensors currently say.
+
+
+def _seed_two_stations(db_session: Session, settings: Settings) -> None:
+    from db.models import DataSource, Observation, SourceStatus
+
+    source = DataSource(name=f"obs-{id(db_session)}", status=SourceStatus.OFFLINE)
+    db_session.add(source)
+    db_session.flush()
+
+    stations = geo_service.stations_from_districts(settings)[:2]
+    start = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    db_session.add_all(
+        [
+            Observation(
+                source_id=source.id,
+                timestamp=start + timedelta(hours=hour),
+                lat=station.lat,
+                lon=station.lon,
+                pm25=40.0 + hour + index * 10,
+                pm10=80.0,
+                temp=22.0,
+                humidity=55.0,
+                traffic_score=30.0,
+            )
+            for index, station in enumerate(stations)
+            for hour in range(6)
+        ]
+    )
+    db_session.flush()
+
+
+def test_latest_returns_one_row_per_station(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    _seed_two_stations(db_session, db_settings)
+
+    body = db_client.get(_url(db_settings, "/data/observations/latest")).json()
+
+    stations = [reading["station"] for reading in body["readings"]]
+    assert len(stations) == len(set(stations))
+    # The newest hour, not an arbitrary one.
+    for reading in body["readings"]:
+        assert reading["timestamp"] == body["observed_at"] or reading["timestamp"] <= body["observed_at"]
+
+
+def test_latest_names_the_district_a_station_sits_in(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    """The map keys its polygons by district, so a reading without one cannot
+    colour anything."""
+    _seed_two_stations(db_session, db_settings)
+
+    body = db_client.get(_url(db_settings, "/data/observations/latest")).json()
+
+    assert any(reading["district_name"] for reading in body["readings"])
+
+
+def test_latest_reports_how_stale_it_is(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    """Demo data stops at the hour it was seeded; a dashboard that showed it as
+    'now' without qualification would be lying by omission."""
+    _seed_two_stations(db_session, db_settings)
+
+    body = db_client.get(_url(db_settings, "/data/observations/latest")).json()
+
+    assert body["stale_minutes"] is not None
+    assert body["stale_minutes"] > 0
+
+
+def test_series_comes_back_oldest_first(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    """A chart reads left to right."""
+    _seed_two_stations(db_session, db_settings)
+    station = geo_service.stations_from_districts(db_settings)[0]
+
+    body = db_client.get(
+        _url(db_settings, "/data/observations/series"),
+        params={"lat": station.lat, "lon": station.lon, "hours": 4},
+    ).json()
+
+    stamps = [point["timestamp"] for point in body["points"]]
+    assert stamps == sorted(stamps)
+    assert len(stamps) == 4
+
+
+def test_series_returns_nothing_for_a_place_with_no_station(
+    db_client: TestClient, db_settings: Settings, db_session: Session
+) -> None:
+    _seed_two_stations(db_session, db_settings)
+
+    body = db_client.get(
+        _url(db_settings, "/data/observations/series"),
+        params={"lat": 0.0, "lon": 0.0},
+    ).json()
+
+    assert body["points"] == []
+
+
+def test_an_impossible_coordinate_is_rejected(
+    db_client: TestClient, db_settings: Settings
+) -> None:
+    response = db_client.get(
+        _url(db_settings, "/data/observations/series"),
+        params={"lat": 999, "lon": 77.2},
+    )
+
+    assert response.status_code == 422

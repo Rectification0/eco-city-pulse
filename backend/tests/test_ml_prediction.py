@@ -284,7 +284,14 @@ def test_the_origin_defaults_to_the_newest_observation(
         db_session, settings, lat=lat, lon=lon, horizon=1, persist=False
     )
 
-    assert result.origin_time == newest.replace(minute=0, second=0, microsecond=0)
+    # Convert *then* floor. The driver may hand back a local-zone datetime, and
+    # flooring 18:30+05:30 to the hour gives 18:00+05:30 — a different instant
+    # from flooring the same moment in UTC. The service converts first, which is
+    # why it is right and the naive comparison was wrong.
+    expected = newest.astimezone(timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
+    assert result.origin_time == expected
 
 
 @pytest.mark.db

@@ -343,8 +343,11 @@ def test_a_run_registers_every_model_with_its_metrics(
         assert entry.mae is not None
         assert Path(entry.artifact_path).exists()
 
-    rows = registry.list_models(db_session, target="pm25_h1")
-    assert len(rows) == len(registered)
+    # The ids this run produced, not every row the target has ever had: the
+    # database may already carry models from an earlier training run.
+    registered_ids = {entry.model_id for entry in registered}
+    listed_ids = {row.id for row in registry.list_models(db_session, target="pm25_h1")}
+    assert registered_ids <= listed_ids
 
 
 @pytest.mark.db

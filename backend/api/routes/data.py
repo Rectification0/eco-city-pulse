@@ -30,7 +30,7 @@ from db.models import (
     RunStatus,
 )
 from services import adapters as adapter_registry
-from services import geo_service, ingestion_service, quality
+from services import datasets, geo_service, ingestion_service, quality
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -565,3 +565,180 @@ async def run_quality(
         persist=persist,
     )
     return QualityRunResponse.model_validate(report.as_dict())
+
+
+# --- Current readings (Phase 10) --------------------------------------------
+#
+# The dependency note in tasks.md has the frontend reading "Phase 2/4/6/7/9
+# endpoints", and building Phase 10 showed one missing: nothing served an
+# *observation*. The profile returns statistics, the ESI returns an index, the
+# predict endpoint returns a forecast -- but the dashboard's hero tile (10.3)
+# and the map gradient (10.4) both need what the sensors currently say.
+#
+# Two reads, both narrow on purpose: the latest row per station, and one
+# station's recent window. Neither computes anything; the analytics layers
+# already exist and this is the raw material they were all built from.
+
+
+class StationReading(BaseModel):
+    """One station's most recent hourly reading."""
+
+    station: str = Field(description="Stable 'lat,lon' key (services.datasets).")
+    lat: float
+    lon: float
+    district_id: str | None = Field(
+        default=None, description="District whose centroid this station sits on."
+    )
+    district_name: str | None = None
+    timestamp: datetime
+    pm25: float | None
+    pm10: float | None
+    temp: float | None
+    humidity: float | None
+    traffic_score: float | None
+    is_anomaly: bool = Field(
+        description="Flagged by the Phase 3 detectors. Flagged, never removed (AC-5)."
+    )
+
+
+class LatestObservationsResponse(BaseModel):
+    readings: list[StationReading]
+    observed_at: datetime | None = Field(
+        description="Newest timestamp in the set; the dashboard's notion of 'now'."
+    )
+    stale_minutes: float | None = Field(
+        default=None,
+        description=(
+            "Age of that newest reading. Demo data is generated up to the hour "
+            "it was seeded, so this grows until the next ingestion run."
+        ),
+    )
+    generated_at: datetime
+
+
+class SeriesPoint(BaseModel):
+    timestamp: datetime
+    pm25: float | None
+    pm10: float | None
+    temp: float | None
+    humidity: float | None
+    traffic_score: float | None
+    is_anomaly: bool
+
+
+class StationSeriesResponse(BaseModel):
+    station: str
+    lat: float
+    lon: float
+    hours: int
+    points: list[SeriesPoint]
+    generated_at: datetime
+
+
+@router.get(
+    "/observations/latest",
+    response_model=LatestObservationsResponse,
+    summary="The most recent reading from every station",
+)
+async def latest_observations(
+    session: SessionDep, settings: SettingsDep
+) -> LatestObservationsResponse:
+    """What the sensors currently say (tasks 10.3, 10.4).
+
+    One row per station, resolved with ``DISTINCT ON`` so the database does the
+    per-group work rather than the application pulling every row and filtering
+    in Python.
+    """
+    statement = (
+        select(Observation)
+        .distinct(Observation.lat, Observation.lon)
+        .order_by(Observation.lat, Observation.lon, Observation.timestamp.desc())
+    )
+    rows = list(session.scalars(statement))
+
+    districts = {
+        district_id: (lat, lon)
+        for district_id, (lat, lon) in geo_service.district_centroids(settings).items()
+    }
+    names = {
+        feature["id"]: feature["properties"]["name"]
+        for feature in geo_service.load_districts(settings)["features"]
+    }
+    by_point = {
+        (round(lat, 5), round(lon, 5)): district_id
+        for district_id, (lat, lon) in districts.items()
+    }
+
+    readings = []
+    for row in rows:
+        district_id = by_point.get((round(row.lat, 5), round(row.lon, 5)))
+        readings.append(
+            StationReading(
+                station=datasets.station_key(row.lat, row.lon),
+                lat=row.lat,
+                lon=row.lon,
+                district_id=district_id,
+                district_name=names.get(district_id) if district_id else None,
+                timestamp=row.timestamp,
+                pm25=row.pm25,
+                pm10=row.pm10,
+                temp=row.temp,
+                humidity=row.humidity,
+                traffic_score=row.traffic_score,
+                is_anomaly=bool(row.is_anomaly),
+            )
+        )
+
+    now = datetime.now(timezone.utc)
+    observed_at = max((r.timestamp for r in readings), default=None)
+    return LatestObservationsResponse(
+        readings=sorted(readings, key=lambda r: r.district_name or r.station),
+        observed_at=observed_at,
+        stale_minutes=(
+            round((now - observed_at).total_seconds() / 60, 1) if observed_at else None
+        ),
+        generated_at=now,
+    )
+
+
+@router.get(
+    "/observations/series",
+    response_model=StationSeriesResponse,
+    summary="One station's recent hourly readings",
+)
+async def station_series(
+    session: SessionDep,
+    lat: Annotated[float, Query(ge=-90, le=90)],
+    lon: Annotated[float, Query(ge=-180, le=180)],
+    hours: Annotated[int, Query(ge=1, le=720)] = 48,
+) -> StationSeriesResponse:
+    """The observed history behind the dashboard's trendline (task 10.5)."""
+    rows = list(
+        session.scalars(
+            select(Observation)
+            .where(Observation.lat == lat, Observation.lon == lon)
+            .order_by(Observation.timestamp.desc())
+            .limit(hours)
+        )
+    )
+
+    return StationSeriesResponse(
+        station=datasets.station_key(lat, lon),
+        lat=lat,
+        lon=lon,
+        hours=hours,
+        points=[
+            SeriesPoint(
+                timestamp=row.timestamp,
+                pm25=row.pm25,
+                pm10=row.pm10,
+                temp=row.temp,
+                humidity=row.humidity,
+                traffic_score=row.traffic_score,
+                is_anomaly=bool(row.is_anomaly),
+            )
+            # Oldest first: a chart reads left to right.
+            for row in reversed(rows)
+        ],
+        generated_at=datetime.now(timezone.utc),
+    )

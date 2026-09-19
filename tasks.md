@@ -189,23 +189,23 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 10.1 | Typed API client in `src/services/` — the only place `fetch` appears | design §12 | M | [ ] |
-| 10.2 | App shell, routing, Tailwind theme | specs §10 | M | [ ] |
-| 10.3 | **Dashboard** — hero KPI tiles for current **ESI** and **PM2.5** | specs §10 | M | [ ] |
-| 10.4 | **Dashboard** — React-Leaflet map with spatial pollution gradients over district GeoJSON | specs §10 | M | [ ] |
-| 10.5 | **Dashboard** — 24-hour prediction trendline | specs §10 | M | [ ] |
-| 10.6 | **EDA Studio** — missingness matrix | Mod 5 | M | [ ] |
-| 10.7 | **EDA Studio** — Plotly histograms and boxplots | Mod 3 | M | [ ] |
-| 10.8 | **EDA Studio** — interactive correlation heatmap | Mod 3 | M | [ ] |
-| 10.9 | **EDA Studio** — parallel coordinates plot | Mod 5 | S | [ ] |
-| 10.10 | **EDA Studio** — STL decomposition overlays | Mod 4 | M | [ ] |
-| 10.11 | **EDA Studio** — t-SNE 2D cluster scatter | specs §6.2 | S | [ ] |
-| 10.12 | **Model Lab** — trained-model table with hyperparameters and MAE/RMSE/R² | specs §10 | M | [ ] |
-| 10.13 | **Model Lab** — feature-importance bar charts | specs §10 | M | [ ] |
-| 10.14 | Prediction form (location + time + horizon) wired to `/ml/predict` | FEAT-06 | M | [ ] |
-| 10.15 | Admin view — ingestion logs, source health, threshold configuration | specs §4 | S | [ ] |
-| 10.16 | Persistent ethics disclaimer: sensor-placement bias + correlation ≠ causation | ETH-1, AC-11 | M | [ ] |
-| 10.17 | Loading, empty, and error states for every data-backed view | — | S | [ ] |
+| 10.1 | Typed API client in `src/services/` — the only place `fetch` appears | design §12 | M | [x] |
+| 10.2 | App shell, routing, Tailwind theme | specs §10 | M | [x] |
+| 10.3 | **Dashboard** — hero KPI tiles for current **ESI** and **PM2.5** | specs §10 | M | [x] |
+| 10.4 | **Dashboard** — React-Leaflet map with spatial pollution gradients over district GeoJSON | specs §10 | M | [x] |
+| 10.5 | **Dashboard** — 24-hour prediction trendline | specs §10 | M | [x] |
+| 10.6 | **EDA Studio** — missingness matrix | Mod 5 | M | [x] |
+| 10.7 | **EDA Studio** — Plotly histograms and boxplots | Mod 3 | M | [x] |
+| 10.8 | **EDA Studio** — interactive correlation heatmap | Mod 3 | M | [x] |
+| 10.9 | **EDA Studio** — parallel coordinates plot | Mod 5 | S | [x] |
+| 10.10 | **EDA Studio** — STL decomposition overlays | Mod 4 | M | [x] |
+| 10.11 | **EDA Studio** — t-SNE 2D cluster scatter | specs §6.2 | S | [x] |
+| 10.12 | **Model Lab** — trained-model table with hyperparameters and MAE/RMSE/R² | specs §10 | M | [x] |
+| 10.13 | **Model Lab** — feature-importance bar charts | specs §10 | M | [x] |
+| 10.14 | Prediction form (location + time + horizon) wired to `/ml/predict` | FEAT-06 | M | [x] |
+| 10.15 | Admin view — ingestion logs, source health, threshold configuration | specs §4 | S | [x] |
+| 10.16 | Persistent ethics disclaimer: sensor-placement bias + correlation ≠ causation | ETH-1, AC-11 | M | [x] |
+| 10.17 | Loading, empty, and error states for every data-backed view | — | S | [x] |
 
 **Exit criteria:** all three screens render against real backend data with the disclaimer visible. *(AC-10, AC-11)*
 

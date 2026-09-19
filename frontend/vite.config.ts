@@ -18,5 +18,21 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        // Plotly is ~4 MB and Leaflet ~150 kB. Left alone they land in the
+        // entry chunk, so the app shell cannot render until the whole charting
+        // stack has downloaded. Split out, the shell paints immediately, the
+        // two vendor chunks load in parallel, and — because they change far
+        // less often than application code — they stay cached across deploys.
+        manualChunks: {
+          plotly: ['plotly.js-dist-min'],
+          leaflet: ['leaflet', 'react-leaflet'],
+        },
+      },
+    },
+    // The plotly chunk is legitimately large; warning about it on every build
+    // trains everyone to ignore the warning.
+    chunkSizeWarningLimit: 5000,
   },
 })

@@ -176,7 +176,11 @@ world. `db`-marked tests run inside a transaction that is rolled back.
 
 ```
 eco-city-pulse/
-├── frontend/src/{components,pages,services}   # SPA; services/ is the only place fetch appears
+├── frontend/src/
+│   ├── charts/              # Plotly wrapper + the shared palette
+│   ├── components/          # Layout, Card, Async states, map, stat tiles
+│   ├── pages/               # Dashboard · EDA Studio · Model Lab · Admin
+│   └── services/api.ts      # The only place fetch appears
 ├── backend/
 │   ├── api/routes/          # Thin HTTP layer — health, data, eda, ml
 │   ├── core/                # config.py (env secrets), exceptions.py (error envelope)
@@ -243,6 +247,8 @@ is the security boundary (SEC-1). Full contract at
 | `POST` | `/ml/train` | Train the ladder and register the results | ✅ 7 |
 | `GET` | `/ml/models` | The model registry, newest first | ✅ 7 |
 | `GET` | `/ml/models/{id}/importance` | SHAP feature importance for one model | ✅ 8 |
+| `GET` | `/data/observations/latest` | Newest reading per station | ✅ 10 |
+| `GET` | `/data/observations/series` | One station's recent hourly readings | ✅ 10 |
 | `POST` | `/ml/predict` | PM2.5 forecast with interval and reasoning | ✅ 9 |
 | `POST` | `/ml/predictions/backfill` | Fill in outcomes once the hour has passed | ✅ 9 |
 
@@ -267,7 +273,7 @@ Errors share one envelope from `core/exceptions.py`:
 | **7** | ML pipeline — 3 horizons, 4 models, leakage audit (FEAT-05) | ✅ Complete |
 | **8** | Explainability — SHAP, additive per model | ✅ Complete |
 | **9** | Prediction service — conformal intervals, persisted forecasts (FEAT-06) | ✅ Complete |
-| 10 | Frontend — Dashboard, EDA Studio, Model Lab | ⬜ |
+| **10** | Frontend — Dashboard, EDA Studio, Model Lab, Admin | ✅ Complete |
 | 11 | Security, quality & release | ⬜ |
 
 Track detail in [`tasks.md`](./tasks.md).
