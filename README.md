@@ -156,12 +156,18 @@ upstream API key, so no test can be influenced by — or reach — the outside
 world. `db`-marked tests run inside a transaction that is rolled back.
 
 > If the host blocks scikit-learn's compiled extensions (Windows Application
-> Control), run the suite in the container instead — same code, Linux runtime:
+> Control), run the suite in the container instead — same code, Linux runtime.
+> `tests/` is excluded from the production image, so mount it, and cap the BLAS
+> threads or the tree models oversubscribe the VM and run ~15× slower:
+>
 > ```bash
-> docker compose run --rm --no-deps --entrypoint pytest backend -q
+> docker compose build backend
+> docker compose run --rm --no-deps -e OMP_NUM_THREADS=4 \
+>   -v "$PWD/backend/tests:/app/tests" \
+>   --entrypoint pytest backend -m "not db" -q
 > ```
-> `tests/` is excluded from the production image, so mount it:
-> `-v "$PWD/backend/tests:/app/tests"`.
+>
+> Add `-m db` instead for the database tests (slow — each retrains the ladder).
 
 ---
 

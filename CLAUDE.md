@@ -85,14 +85,18 @@ Do all of these before committing:
 
 - Host Windows **Application Control** may block scikit-learn's compiled
   extensions (`_argkmin_classmode.pyd`), which breaks any import of
-  `sklearn.metrics`. Reinstalling does not clear it — the policy blocks by
-  content. Run the suite in the Linux container instead:
+  `sklearn.metrics` and so the whole app. Reinstalling does not clear it — the
+  policy blocks by content. Run the suite in the Linux container instead, and
+  **do not attempt to weaken the policy**:
   ```bash
-  docker compose run --rm --no-deps \
-    -v "$PWD/backend/tests:/app/tests" --entrypoint pytest backend -q
+  docker compose build backend          # the image must carry current source
+  docker compose run --rm --no-deps -e OMP_NUM_THREADS=4 \
+    -v "$PWD/backend/tests:/app/tests" \
+    --entrypoint pytest backend -m "not db" -q
   ```
-  Do not attempt to weaken the policy.
-- `tests/` is excluded from the production image by `.dockerignore`, hence the
-  mount above.
+  `tests/` is excluded from the production image by `.dockerignore`, hence the
+  mount. Cap the BLAS threads: the tree models use `n_jobs=-1` and oversubscribe
+  the VM badly (~15× slower without it). The `-m db` tests are slower still,
+  because several retrain the whole ladder per test.
 - Use the scratchpad directory for throwaway verification scripts; never commit
   them.
