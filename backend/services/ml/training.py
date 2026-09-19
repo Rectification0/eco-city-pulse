@@ -51,6 +51,7 @@ from services.features.transformer import FeatureTransformer
 from services.ml import (
     classical,
     evaluation,
+    intervals,
     preprocessing,
     registry,
     selection,
@@ -78,6 +79,9 @@ class ModelReport:
     notes: str
     fit_seconds: float
     scaler_audit: dict[str, Any] | None = None
+    # Residual quantiles from the held-out window, frozen for Phase 9's
+    # prediction intervals (task 9.3). None when the window was too short.
+    calibration: intervals.Calibration | None = None
     registered: registry.RegisteredModel | None = None
     unavailable: str | None = None
 
@@ -92,6 +96,7 @@ class ModelReport:
             "notes": self.notes,
             "fit_seconds": round(self.fit_seconds, 2),
             "scaler_audit": self.scaler_audit,
+            "calibration": self.calibration.as_dict() if self.calibration else None,
             "registered": self.registered.as_dict() if self.registered else None,
             "unavailable": self.unavailable,
         }
@@ -293,7 +298,19 @@ def _fit_and_score(
             None,
         )
 
-    metrics = evaluation.score(test_y.to_numpy(), model.predict(test_x))
+    test_predictions = model.predict(test_x)
+    metrics = evaluation.score(test_y.to_numpy(), test_predictions)
+
+    # --- 9.3: calibrate the prediction interval on the held-out window ------
+    # The residuals a model made on data it was not fitted on are the only
+    # honest basis for an interval, and this is the one place they exist. They
+    # are read here and frozen into the artifact, because an interval is
+    # meaningful only beside the model whose errors produced it.
+    calibration = intervals.calibrate(
+        test_y.to_numpy(),
+        test_predictions,
+        window=f"{split.test_start.isoformat()}..{split.test_end.isoformat()}",
+    )
 
     # --- Cross-validation on the training portion only (task 7.10) ----------
     # The folds are computed once per horizon and shared by every model, so the
@@ -337,6 +354,7 @@ def _fit_and_score(
             notes=spec.notes,
             fit_seconds=time.perf_counter() - started,
             scaler_audit=scaler_audit,
+            calibration=calibration,
         ),
         model,
     )
@@ -495,6 +513,9 @@ def _artifact(
         "feature_fingerprint": transformer.fingerprint,
         "hyperparameters": report.hyperparameters,
         "metrics": report.metrics.as_dict(),
+        # Task 9.3: the interval travels with the model, because residual
+        # quantiles only describe the model that produced them.
+        "calibration": report.calibration.as_dict() if report.calibration else None,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 

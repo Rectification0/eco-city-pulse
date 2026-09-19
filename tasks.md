@@ -173,13 +173,13 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 9.1 | Inference lag-feature fetcher — assemble features for a given location + time from `observations` | FEAT-06 | M | [ ] |
-| 9.2 | Load the registered model artifact and run inference | FEAT-06 | M | [ ] |
-| 9.3 | Confidence-interval estimation | specs §8 | M | [ ] |
-| 9.4 | `POST /api/v1/ml/predict` returning `prediction`, `unit`, `confidence_interval`, `top_features` | AC-9 | M | [ ] |
-| 9.5 | Persist each prediction to `predictions` | specs §9 | M | [ ] |
-| 9.6 | Backfill `predictions.actual_value` once the real observation arrives (drift monitoring input) | design §6.1 | S | [ ] |
-| 9.7 | Contract test on the exact response shape from the spec | AC-9 | M | [ ] |
+| 9.1 | Inference lag-feature fetcher — assemble features for a given location + time from `observations` | FEAT-06 | M | [x] |
+| 9.2 | Load the registered model artifact and run inference | FEAT-06 | M | [x] |
+| 9.3 | Confidence-interval estimation | specs §8 | M | [x] |
+| 9.4 | `POST /api/v1/ml/predict` returning `prediction`, `unit`, `confidence_interval`, `top_features` | AC-9 | M | [x] |
+| 9.5 | Persist each prediction to `predictions` | specs §9 | M | [x] |
+| 9.6 | Backfill `predictions.actual_value` once the real observation arrives (drift monitoring input) | design §6.1 | S | [x] |
+| 9.7 | Contract test on the exact response shape from the spec | AC-9 | M | [x] |
 
 **Exit criteria:** predict endpoint matches the specified response contract exactly. *(AC-9)*
 

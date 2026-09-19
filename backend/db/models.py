@@ -23,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
@@ -234,12 +235,32 @@ class Prediction(Base):
     # Nullable on purpose: backfilled once the real observation lands (task 9.6).
     actual_value: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Beyond the columns specs §9 lists, for the same reason ingestion_runs is:
+    # the requirement (design §6.1) is that actual_value be backfilled from the
+    # observation this forecast was about, and "the observation at that hour" is
+    # not a single row -- every station reports that hour. Without the location
+    # the backfill would have to guess, so a prediction records where it was
+    # for. Nullable so a city-wide forecast can leave them unset.
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     model: Mapped[MLModel] = relationship(back_populates="predictions")
 
     __table_args__ = (
         Index("ix_predictions_model_id_target_time", "model_id", "target_time"),
         # The backfill job scans by time across every model.
         Index("ix_predictions_target_time", "target_time"),
+        # The backfill's actual query: rows still missing an outcome, oldest
+        # first, matched to a station (task 9.6). Partial, because a prediction
+        # that already has its outcome is never scanned again -- the index stays
+        # the size of the backlog rather than of the whole history.
+        Index(
+            "ix_predictions_pending_backfill",
+            "target_time",
+            "lat",
+            "lon",
+            postgresql_where=text("actual_value IS NULL"),
+        ),
     )
 
     @validates("target_time")

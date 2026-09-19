@@ -412,3 +412,141 @@ def test_every_phase_eight_route_is_documented(
     paths = ml_client.get("/openapi.json").json()["paths"]
 
     assert "/api/v1/ml/models/{model_id}/importance" in paths
+
+
+# --- POST /ml/predict — FEAT-06, AC-9 (Phase 9) -----------------------------
+
+
+def _predict(client: TestClient, settings: Settings, lat: float, lon: float, **overrides):
+    body = {"lat": lat, "lon": lon, "horizon": 1, "persist": False, **overrides}
+    return client.post(_url(settings, "/ml/predict"), json=body)
+
+
+@pytest.fixture
+def station(ml_settings: Settings) -> tuple[float, float]:
+    first = geo_service.stations_from_districts(ml_settings)[0]
+    return first.lat, first.lon
+
+
+def test_predict_returns_the_contract_specs_8_specifies(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    """AC-9 through HTTP: the four keys, spelled and typed as the spec writes."""
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    response = _predict(ml_client, ml_settings, *station)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["prediction"], float)
+    assert body["unit"] == "ug/m3"
+    assert len(body["confidence_interval"]) == 2
+    assert body["confidence_interval"][0] <= body["prediction"] <= body["confidence_interval"][1]
+    assert body["top_features"]
+
+
+def test_the_forecast_says_which_model_and_which_hour(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    body = _predict(ml_client, ml_settings, *station).json()
+
+    assert body["model"]["name"] == "xgboost"
+    assert body["horizon_hours"] == 1
+    assert body["target_time"] > body["origin_time"]
+
+
+def test_the_interval_names_the_method_that_produced_it(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    """A conformal interval and an RMSE approximation are not interchangeable,
+    so the response says which one the caller got (task 9.3)."""
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    body = _predict(ml_client, ml_settings, *station).json()
+
+    assert body["interval_method"] in {
+        "conformal_residual_quantiles",
+        "rmse_normal_approximation",
+    }
+
+
+def test_a_wider_coverage_widens_the_interval(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    narrow = _predict(ml_client, ml_settings, *station, coverage=0.5).json()
+    wide = _predict(ml_client, ml_settings, *station, coverage=0.95).json()
+
+    narrow_width = narrow["confidence_interval"][1] - narrow["confidence_interval"][0]
+    wide_width = wide["confidence_interval"][1] - wide["confidence_interval"][0]
+    assert wide_width > narrow_width
+
+
+def test_the_forecast_reaches_the_predictions_table(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    """Task 9.5."""
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    body = _predict(ml_client, ml_settings, *station, persist=True).json()
+
+    assert body["prediction_id"] is not None
+
+
+def test_predicting_an_untrained_horizon_is_a_409(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    """Fixed by training, not by changing the request — hence 409, not 422."""
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    response = _predict(ml_client, ml_settings, *station, horizon=24)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "model_not_trained"
+
+
+def test_an_out_of_range_coordinate_is_rejected(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    response = _predict(ml_client, ml_settings, 999.0, 77.0)
+
+    assert response.status_code == 422
+
+
+def test_an_impossible_coverage_is_rejected(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    response = _predict(ml_client, ml_settings, *station, coverage=1.5)
+
+    assert response.status_code == 422
+
+
+def test_the_forecast_carries_its_ethics_caveat(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource, station
+) -> None:
+    _train(ml_client, ml_settings, seeded, models=["xgboost"], persist=True)
+
+    body = _predict(ml_client, ml_settings, *station).json()
+
+    assert any("ETH-1" in caveat for caveat in body["caveats"])
+
+
+def test_backfill_reports_what_it_resolved(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    response = ml_client.post(_url(ml_settings, "/ml/predictions/backfill"))
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"matched", "scanned", "still_pending"}
+
+
+def test_every_phase_nine_route_is_documented(
+    ml_client: TestClient, ml_settings: Settings
+) -> None:
+    paths = ml_client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/ml/predict" in paths
+    assert "/api/v1/ml/predictions/backfill" in paths

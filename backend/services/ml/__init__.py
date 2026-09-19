@@ -14,6 +14,8 @@ and each is worth reading on its own:
 - ``training``      — the orchestration
 - ``explain``       — SHAP attribution, exact for Ridge and the baseline (8.1-8.4)
 - ``serving``       — load a registered model and replay its feature contract
+- ``intervals``     — conformal prediction intervals from held-out residuals (9.3)
+- ``prediction``    — the forecast, its interval, its reasoning, its row (9.1-9.6)
 
 Two commitments run through all of it:
 
@@ -31,7 +33,9 @@ from services.ml import (
     classical,
     evaluation,
     explain,
+    intervals,
     models,
+    prediction,
     preprocessing,
     registry,
     selection,
@@ -43,6 +47,7 @@ from services.ml import (
 from services.ml.evaluation import Metrics
 from services.ml.explain import Attribution, GlobalImportance, ModelExplainer
 from services.ml.models import NaiveLag1, build_ladder
+from services.ml.prediction import PredictionResult, backfill_actuals
 from services.ml.registry import RegisteredModel
 from services.ml.splitting import TimeSplit
 from services.ml.targets import DEFAULT_HORIZONS, target_name
@@ -57,14 +62,18 @@ __all__ = [
     "ModelExplainer",
     "ModelReport",
     "NaiveLag1",
+    "PredictionResult",
     "RegisteredModel",
     "TimeSplit",
     "TrainingReport",
     "build_ladder",
+    "backfill_actuals",
     "classical",
     "evaluation",
     "explain",
+    "intervals",
     "models",
+    "prediction",
     "preprocessing",
     "registry",
     "run",

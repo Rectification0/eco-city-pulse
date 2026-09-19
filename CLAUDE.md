@@ -80,14 +80,21 @@ Do all of these before committing:
    path only runs with a database, exercise it some other way and say so.
 5. **Commit and push** — conventional commit (`feat(phase-N): …`), body
    explaining the decisions and any findings fixed along the way.
+6. **If the phase needed Docker Desktop / WSL** — stop the containers, then
+   **remind the user to close `vmmemWSL` from Task Manager as administrator**.
+   WSL2 does not hand freed memory back to Windows on its own: the VM keeps
+   pages it has already allocated even with every container exited, so the
+   reminder is the difference between a gigabyte or two reclaimed and a
+   gigabyte or two idle. (`wsl --shutdown` does the same thing from a shell.)
 
 ## Environment notes
 
-- Host Windows **Application Control** may block scikit-learn's compiled
-  extensions (`_argkmin_classmode.pyd`), which breaks any import of
-  `sklearn.metrics` and so the whole app. Reinstalling does not clear it — the
-  policy blocks by content. Run the suite in the Linux container instead, and
-  **do not attempt to weaken the policy**:
+- Host Windows **Application Control** has been seen to block scikit-learn's
+  compiled extensions (`_argkmin_classmode.pyd`), which breaks any import of
+  `sklearn.metrics` and so the whole app. It cleared on its own a while after
+  `pip install --force-reinstall --no-deps scikit-learn==<pinned>`, so try that
+  first — the freshly written file gets re-evaluated. If it persists, run the
+  suite in the Linux container instead, and **do not weaken the policy**:
   ```bash
   docker compose build backend          # the image must carry current source
   docker compose run --rm --no-deps -e OMP_NUM_THREADS=4 \

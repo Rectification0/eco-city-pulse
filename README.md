@@ -84,6 +84,7 @@ the tests actually assert.
 | **ESI** (FEAT-04) | `eda/reduction.py`, `eda/manifold.py` | PCA PC1 → **0–100**, oriented to PM2.5, loadings shipped with every score (AC-6). t-SNE is EDA-only |
 | **ML** (FEAT-05) | `ml/` | 3 horizons × 4 models. Chronological split + embargo, scaler inside the model, expanding-window CV (AC-7, AC-8) |
 | **Explainability** | `ml/explain.py` | `prediction = base_value + Σ contributions`, asserted for every model |
+| **Prediction** (FEAT-06) | `ml/prediction.py`, `ml/intervals.py` | The specs §8 contract exactly; interval calibrated on the model's own held-out residuals (AC-9) |
 
 Two commitments run through all of it:
 
@@ -242,7 +243,8 @@ is the security boundary (SEC-1). Full contract at
 | `POST` | `/ml/train` | Train the ladder and register the results | ✅ 7 |
 | `GET` | `/ml/models` | The model registry, newest first | ✅ 7 |
 | `GET` | `/ml/models/{id}/importance` | SHAP feature importance for one model | ✅ 8 |
-| `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
+| `POST` | `/ml/predict` | PM2.5 forecast with interval and reasoning | ✅ 9 |
+| `POST` | `/ml/predictions/backfill` | Fill in outcomes once the hour has passed | ✅ 9 |
 
 **`POST /data/ingest` returns 200 even when a source fails** — DR-1 expressed in
 the API. Read the per-source `status`, not just the HTTP code.
@@ -264,7 +266,7 @@ Errors share one envelope from `core/exceptions.py`:
 | **6** | Dimensionality reduction & ESI (FEAT-04) | ✅ Complete |
 | **7** | ML pipeline — 3 horizons, 4 models, leakage audit (FEAT-05) | ✅ Complete |
 | **8** | Explainability — SHAP, additive per model | ✅ Complete |
-| 9 | Prediction service (FEAT-06) | ⬜ |
+| **9** | Prediction service — conformal intervals, persisted forecasts (FEAT-06) | ✅ Complete |
 | 10 | Frontend — Dashboard, EDA Studio, Model Lab | ⬜ |
 | 11 | Security, quality & release | ⬜ |
 

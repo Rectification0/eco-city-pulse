@@ -1,4 +1,4 @@
-"""ML routes — FEAT-05 and explainability (Phases 7-8).
+"""ML routes — FEAT-05, explainability and FEAT-06 (Phases 7-9).
 
 specs §8 names only ``POST /ml/predict``, which is Phase 9. The endpoints here
 exist because the dependency order in ``tasks.md`` has the frontend reading
@@ -25,7 +25,16 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, model_validator
 
 from api.dependencies import SessionDep, SettingsDep
-from services.ml import explain, registry, serving, splitting, targets, training
+from services.ml import (
+    explain,
+    intervals,
+    prediction,
+    registry,
+    serving,
+    splitting,
+    targets,
+    training,
+)
 from services.ml import models as model_zoo
 
 router = APIRouter(prefix="/ml", tags=["ml"])
@@ -302,6 +311,157 @@ async def list_models(
     ]
 
 
+# --- Prediction — FEAT-06 (Phase 9) ----------------------------------------
+
+
+class PredictionRequest(BaseModel):
+    """Location, time and horizon (design §11)."""
+
+    lat: float = Field(ge=-90, le=90, description="Decimal degrees (DR-3).")
+    lon: float = Field(ge=-180, le=180, description="Decimal degrees (DR-3).")
+    horizon: int = Field(
+        default=1,
+        description=(
+            f"Hours ahead. A model must be registered for it; "
+            f"{list(targets.DEFAULT_HORIZONS)} are trained by default."
+        ),
+    )
+    at: datetime | None = Field(
+        default=None,
+        description=(
+            "Origin of the forecast. Defaults to the newest observation, which "
+            "is what 'now' means to this platform — in demo mode the wall clock "
+            "can run ahead of the seeded data."
+        ),
+    )
+    coverage: float = Field(
+        default=intervals.DEFAULT_COVERAGE,
+        ge=intervals.MIN_COVERAGE,
+        le=intervals.MAX_COVERAGE,
+        description="Interval coverage, e.g. 0.8 for an 80% interval.",
+    )
+    top_features: int = Field(
+        default=explain.DEFAULT_TOP_FEATURES,
+        ge=1,
+        le=20,
+        description="How many attributions to return with the forecast.",
+    )
+    model_name: str | None = Field(
+        default=None,
+        description=(
+            f"Which rung to serve from. Defaults to {model_zoo.PRODUCTION_MODEL}; "
+            "the registry holds the whole ladder so the others can be compared."
+        ),
+    )
+    persist: bool = Field(
+        default=True, description="Write the forecast to `predictions` (task 9.5)."
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> PredictionRequest:
+        if self.horizon < 1 or self.horizon > 168:
+            raise ValueError("horizon must be between 1 and 168 hours")
+        if self.model_name and self.model_name not in LADDER_NAMES:
+            raise ValueError(
+                f"unknown model {self.model_name!r}; available: {list(LADDER_NAMES)}"
+            )
+        return self
+
+
+class PredictionResponse(BaseModel):
+    """AC-9: the four fields specs §8 specifies, plus provenance.
+
+    The first four keys are the spec's contract, spelled exactly as the example
+    writes them — including ``"ug/m3"`` in ASCII and the interval as a
+    two-element array. Everything after them is additional context a caller may
+    ignore; nothing the spec names has been renamed, reshaped or nested.
+    """
+
+    prediction: float
+    unit: str
+    confidence_interval: list[float] = Field(
+        min_length=2, max_length=2, description="[lower, upper]"
+    )
+    top_features: dict[str, float] = Field(
+        description=(
+            "Signed SHAP contributions in µg/m³, largest first. Positive pushed "
+            "the forecast up, negative pulled it down."
+        )
+    )
+
+    target_time: datetime
+    origin_time: datetime
+    horizon_hours: int
+    lat: float
+    lon: float
+    coverage: float
+    interval_method: str = Field(
+        description=(
+            "conformal_residual_quantiles (calibrated on held-out errors) or "
+            "rmse_normal_approximation (fallback for a model registered before "
+            "calibration existed)."
+        )
+    )
+    base_value: float
+    model: dict[str, Any]
+    prediction_id: int | None
+    caveats: list[str]
+
+
+class BackfillResponse(BaseModel):
+    matched: int
+    scanned: int
+    still_pending: int
+
+
+@router.post(
+    "/predict",
+    response_model=PredictionResponse,
+    summary="PM2.5 forecast with its interval and its reasoning",
+)
+async def predict(
+    session: SessionDep, settings: SettingsDep, request: PredictionRequest
+) -> PredictionResponse:
+    """The prediction endpoint (FEAT-06, AC-9).
+
+    Returns 409 when no model is registered for the horizon, and 422 when the
+    station has too little history to build every feature — the difference
+    matters, because the first is fixed by training and the second by waiting.
+    """
+    result = prediction.predict(
+        session,
+        settings,
+        lat=request.lat,
+        lon=request.lon,
+        horizon=request.horizon,
+        at=request.at,
+        coverage=request.coverage,
+        model_name=request.model_name,
+        persist=request.persist,
+        top_features=request.top_features,
+    )
+    return PredictionResponse.model_validate(result.as_dict(request.top_features))
+
+
+@router.post(
+    "/predictions/backfill",
+    response_model=BackfillResponse,
+    summary="Fill in the outcome of forecasts whose hour has passed",
+)
+async def backfill(
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=50_000)] = 5_000,
+) -> BackfillResponse:
+    """Task 9.6 — what turns `predictions` into the drift-monitoring dataset.
+
+    Matching is on station *and* hour: pairing a forecast for one district with
+    a reading from another would record the difference as model error.
+    """
+    return BackfillResponse.model_validate(
+        prediction.backfill_actuals(session, limit=limit).as_dict()
+    )
+
+
 @router.get(
     "/models/{model_id}/importance",
     response_model=ImportanceResponse,
@@ -368,6 +528,8 @@ async def model_importance(
 __all__ = [
     "LADDER_NAMES",
     "ImportanceResponse",
+    "PredictionRequest",
+    "PredictionResponse",
     "RegisteredModelResponse",
     "TrainingRequest",
     "TrainingResponse",

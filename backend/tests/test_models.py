@@ -55,6 +55,15 @@ SPEC_COLUMNS = {
 # its output without saying where it lives (tasks 2.7, 2.8).
 LOG_TABLES = {"ingestion_runs", "quarantined_records"}
 
+# Columns beyond specs §9, each one a recorded decision rather than drift.
+#
+# ``predictions.lat/lon``: design §6.1 requires ``actual_value`` to be
+# backfilled from the observation the forecast was about, and "the observation
+# at that hour" is not a single row -- every station reports that hour. Matching
+# on time alone would pair a forecast for one district with a reading from
+# another and record the difference as model error (task 9.6).
+SPEC_EXTENSIONS: dict[str, set[str]] = {"predictions": {"lat", "lon"}}
+
 
 def test_all_four_spec_tables_are_defined() -> None:
     assert set(SPEC_COLUMNS) <= set(Base.metadata.tables)
@@ -67,8 +76,28 @@ def test_no_table_exists_beyond_the_spec_and_the_ingestion_log() -> None:
 
 @pytest.mark.parametrize(("table", "columns"), SPEC_COLUMNS.items())
 def test_columns_match_the_specification(table: str, columns: set[str]) -> None:
-    """Exact equality, not a subset: an extra column is drift from the spec."""
-    assert {c.name for c in Base.metadata.tables[table].columns} == columns
+    """Exact equality against the spec plus its recorded extensions.
+
+    Still equality rather than a subset: an extra column that nobody wrote down
+    in ``SPEC_EXTENSIONS`` is drift, and fails here.
+    """
+    expected = columns | SPEC_EXTENSIONS.get(table, set())
+
+    assert {c.name for c in Base.metadata.tables[table].columns} == expected
+
+
+def test_a_prediction_records_where_it_was_for() -> None:
+    """Task 9.6. Without it the backfill would have to guess which station's
+    reading was the outcome of a given forecast."""
+    columns = {c.name for c in Base.metadata.tables["predictions"].columns}
+
+    assert {"lat", "lon"} <= columns
+    # Nullable: a future city-wide aggregate forecast has no single location,
+    # and rows written before the migration have none.
+    assert all(
+        Base.metadata.tables["predictions"].columns[name].nullable
+        for name in ("lat", "lon")
+    )
 
 
 def test_observations_carry_the_composite_index() -> None:
