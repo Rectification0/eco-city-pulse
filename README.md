@@ -763,6 +763,69 @@ accident of iteration order.
 
 ---
 
+## Explainability
+
+design §10.2 — the answer to the problem statement's complaint about opaque
+models.
+
+```bash
+curl "localhost:8000/api/v1/ml/models/4/importance?sample_rows=500" | jq
+```
+
+### Additivity is why SHAP earns its cost
+
+A split-count importance tells you what the *model* looked at overall. A SHAP
+value tells you what moved **this** prediction, in µg/m³, with a sign — and the
+contributions sum exactly to the distance between the prediction and the model's
+baseline expectation:
+
+```
+prediction = base_value + Σ contributions
+54.81      = 37.62      + (pm25 +12.27, temp_lag_3h +3.06, hour_of_day −1.59, …)
+```
+
+That identity is what makes an explanation **checkable** rather than decorative,
+so it is asserted on every path and for every model, not rounded away.
+
+### Every rung explains itself
+
+| Model | Method | Exact? |
+|-------|--------|--------|
+| XGBoost · Random Forest | `shap.TreeExplainer` | yes, for trees |
+| Ridge | analytic: `coef · (x − mean)`, using the fitted scaler's means | yes |
+| Naive Lag-1 | the forecast *is* PM2.5, so PM2.5 gets all of it | yes, trivially |
+
+The last two need no SHAP library at all. Computing a known-exact answer in
+closed form is faster *and* more honest than approximating it with a sampler,
+and it means the Model Lab compares **reasoning** across the ladder, not just
+error — a model that beats the baseline for the wrong reasons is worth seeing.
+
+**The reference point belongs to the model, not the request.** The baseline's
+expected value is recorded at fit time and Ridge's comes from the scaler's
+training means. Deriving it from the rows being explained would make a
+single-row explanation measure a row against itself and attribute nothing to
+anything — which is exactly the serving case.
+
+### Configuration for the Analyst (specs §4)
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| `sample_rows` | 500 | Chosen by measurement: the ranking is identical from 100 rows up, while the Random Forest costs ~2.3s at 200 rows and ~25s at 2000. |
+| `perturbation` | `tree_path_dependent` | `interventional` integrates over a background sample — truer to the data, and **unsupported for XGBoost 3 trees**, which SHAP rejects. That is reported as a 503 naming the working option rather than silently downgraded: an analyst who asked for one method and quietly received another would draw conclusions from a method they did not choose. |
+
+### What an attribution is not
+
+A SHAP value describes how a feature moved *this model's* output. It is a
+statement about the model, not about the atmosphere — a large attribution is
+**not** evidence that the feature caused the pollution (ETH-1). The caveat ships
+in every payload rather than being left to whoever writes the UI.
+
+Per-prediction attribution (`top_features`) is produced by
+`serving.explain_at()` and reaches the caller in the `/ml/predict` response in
+Phase 9.
+
+---
+
 ## Local development
 
 ### Database
@@ -857,7 +920,7 @@ eco-city-pulse/
 │   │   ├── quality/             # Missingness, imputation, outliers, pipeline
 │   │   ├── eda/                 # Profile, STL, cache, report, PCA/ESI, t-SNE
 │   │   ├── features/            # Spec, temporal, windows, transformer, store
-│   │   ├── ml/                  # Targets, splitting, models, registry, training
+│   │   ├── ml/                  # Targets, splitting, models, registry, training, SHAP
 │   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
 │   │   ├── ingestion_service.py # The single write path
 │   │   ├── datasets.py          # The pandas boundary
@@ -934,6 +997,7 @@ is the security boundary (SEC-1). Full contract at
 | `POST` | `/eda/tsne` | t-SNE 2D projection (EDA Studio only) | ✅ Phase 6 |
 | `POST` | `/ml/train` | Train the ladder and register the results | ✅ Phase 7 |
 | `GET` | `/ml/models` | The model registry, newest first | ✅ Phase 7 |
+| `GET` | `/ml/models/{id}/importance` | SHAP feature importance for one model | ✅ Phase 8 |
 | `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
 
 **`POST /data/ingest` returns 200 even when a source fails.** That is DR-1
@@ -961,7 +1025,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 | **5** | Feature engineering — temporal, lag, rolling, log; one shared transformer | ✅ Complete |
 | **6** | Dimensionality reduction & ESI — PCA, loadings, 0–100 index, t-SNE (FEAT-04) | ✅ Complete |
 | **7** | ML pipeline — three horizons, four models, leakage audit, registry (FEAT-05) | ✅ Complete |
-| 8 | Explainability — SHAP | ⬜ |
+| **8** | Explainability — SHAP attribution, additive and exact per model | ✅ Complete |
 | 9 | Prediction service (FEAT-06) | ⬜ |
 | 10 | Frontend — Dashboard, EDA Studio, Model Lab | ⬜ |
 | 11 | Security, quality & release | ⬜ |

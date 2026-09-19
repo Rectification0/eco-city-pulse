@@ -277,3 +277,138 @@ def test_every_phase_seven_route_is_documented(
 
     assert "/api/v1/ml/train" in paths
     assert "/api/v1/ml/models" in paths
+
+
+# --- GET /ml/models/{id}/importance — Phase 8 -------------------------------
+
+
+def _first_model_id(client: TestClient, settings: Settings) -> int:
+    return client.get(_url(settings, "/ml/models")).json()[0]["id"]
+
+
+def test_importance_ranks_the_features_the_model_relies_on(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    """Task 8.2: what the Model Lab's feature-importance chart renders."""
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+
+    response = ml_client.get(
+        _url(ml_settings, f"/ml/models/{model_id}/importance"),
+        params={"sample_rows": 100},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_id"] == model_id
+    assert body["features"]
+    shares = [item["share"] for item in body["features"]]
+    assert shares == sorted(shares, reverse=True)
+    assert sum(shares) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_importance_states_how_it_was_computed(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    """Ridge is solved in closed form rather than sampled, and the payload says
+    so -- an explanation whose method is unstated cannot be judged."""
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+
+    body = ml_client.get(
+        _url(ml_settings, f"/ml/models/{model_id}/importance"),
+        params={"sample_rows": 100},
+    ).json()
+
+    assert body["method"] in {"linear_exact", "persistence_exact"} or body[
+        "method"
+    ].startswith("shap_tree:")
+    assert body["base_value"] is not None
+
+
+def test_importance_carries_the_ethics_caveat(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    """ETH-1: attribution describes the model, not the atmosphere."""
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+
+    body = ml_client.get(
+        _url(ml_settings, f"/ml/models/{model_id}/importance"),
+        params={"sample_rows": 100},
+    ).json()
+
+    assert "not evidence that the feature caused" in body["caveat"]
+
+
+def test_importance_is_cached_on_the_second_call(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+    url = _url(ml_settings, f"/ml/models/{model_id}/importance")
+
+    first = ml_client.get(url, params={"sample_rows": 100}).json()
+    second = ml_client.get(url, params={"sample_rows": 100}).json()
+
+    assert not first["cached"]
+    assert second["cached"]
+
+
+def test_the_sample_size_is_configurable_for_the_analyst(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    """Task 8.4. The ranking settles well below the default, so an analyst can
+    trade rows for latency knowingly."""
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+    url = _url(ml_settings, f"/ml/models/{model_id}/importance")
+
+    small = ml_client.get(url, params={"sample_rows": 60}).json()
+
+    assert small["rows"] <= 60
+
+
+def test_an_unknown_perturbation_is_rejected(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+
+    response = ml_client.get(
+        _url(ml_settings, f"/ml/models/{model_id}/importance"),
+        params={"perturbation": "magic"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_an_absurd_sample_size_is_rejected(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    _train(ml_client, ml_settings, seeded, persist=True)
+    model_id = _first_model_id(ml_client, ml_settings)
+
+    response = ml_client.get(
+        _url(ml_settings, f"/ml/models/{model_id}/importance"),
+        params={"sample_rows": 500_000},
+    )
+
+    assert response.status_code == 422
+
+
+def test_explaining_an_unregistered_model_is_a_404(
+    ml_client: TestClient, ml_settings: Settings, seeded: DataSource
+) -> None:
+    response = ml_client.get(_url(ml_settings, "/ml/models/99999/importance"))
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "model_not_found"
+
+
+def test_every_phase_eight_route_is_documented(
+    ml_client: TestClient, ml_settings: Settings
+) -> None:
+    paths = ml_client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/ml/models/{model_id}/importance" in paths

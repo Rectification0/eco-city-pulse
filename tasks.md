@@ -160,10 +160,10 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 8.1 | **SHAP** explainer over the trained XGBoost model | design §10.2 | M | [ ] |
-| 8.2 | Global feature importance surfaced for the Model Lab | specs §10 | M | [ ] |
-| 8.3 | Per-prediction `top_features` attribution for the predict response | FEAT-06 | M | [ ] |
-| 8.4 | SHAP configuration options exposed to the Analyst role | specs §4 | S | [ ] |
+| 8.1 | **SHAP** explainer over the trained XGBoost model | design §10.2 | M | [x] |
+| 8.2 | Global feature importance surfaced for the Model Lab | specs §10 | M | [x] |
+| 8.3 | Per-prediction `top_features` attribution for the predict response | FEAT-06 | M | [x] |
+| 8.4 | SHAP configuration options exposed to the Analyst role | specs §4 | S | [x] |
 
 **Exit criteria:** every prediction ships with its reasoning; no number appears in the UI unexplained.
 

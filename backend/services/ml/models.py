@@ -78,6 +78,11 @@ class NaiveLag1(BaseEstimator, RegressorMixin):
             )
         self.n_features_in_ = X.shape[1]
         self.feature_names_in_ = np.asarray(X.columns)
+        # The training mean, kept solely so Phase 8 has a reference point that
+        # belongs to the *model* rather than to whatever rows are being
+        # explained. Without it, explaining a single row would measure that row
+        # against itself and attribute nothing to anything.
+        self.base_value_ = float(X[self.column].mean())
         self.is_fitted_ = True
         return self
 

@@ -1,10 +1,10 @@
-"""ML routes — FEAT-05 (Phase 7).
+"""ML routes — FEAT-05 and explainability (Phases 7-8).
 
-specs §8 names only ``POST /ml/predict``, which is Phase 9. The two endpoints
-here exist because the dependency order in ``tasks.md`` has the frontend
-reading "Phase 7 endpoints": the Model Lab (task 10.12) renders the trained
-models with their hyperparameters and MAE/RMSE/R², and something has to trigger
-a run.
+specs §8 names only ``POST /ml/predict``, which is Phase 9. The endpoints here
+exist because the dependency order in ``tasks.md`` has the frontend reading
+"Phase 7 endpoints": the Model Lab (tasks 10.12, 10.13) renders the trained
+models with their hyperparameters, their MAE/RMSE/R² and their feature
+importances, and something has to trigger a run.
 
 **Training is synchronous, and that is a deliberate limit rather than an
 oversight.** A full run over the demo dataset takes tens of seconds, and adding
@@ -21,11 +21,12 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, model_validator
 
 from api.dependencies import SessionDep, SettingsDep
+from services.ml import explain, registry, serving, splitting, targets, training
 from services.ml import models as model_zoo
-from services.ml import registry, splitting, targets, training
 
 router = APIRouter(prefix="/ml", tags=["ml"])
 
@@ -191,6 +192,45 @@ class RegisteredModelResponse(BaseModel):
     artifact_path: str
 
 
+# --- Explainability — Phase 8 (design §10.2) --------------------------------
+
+
+class FeatureImportanceResponse(BaseModel):
+    feature: str
+    mean_abs_shap: float = Field(
+        description="Average magnitude of this feature's effect, in µg/m³."
+    )
+    mean_shap: float = Field(
+        description="Average signed effect. Near zero with a large magnitude "
+        "means the feature pushes both ways depending on its value."
+    )
+    share: float = Field(description="Fraction of total attributed magnitude.")
+    direction: str = Field(description="raises · lowers · mixed")
+
+
+class ImportanceResponse(BaseModel):
+    """Task 8.2: what the Model Lab's feature-importance chart renders."""
+
+    model_id: int
+    name: str
+    target: str
+    horizon_hours: int
+    trained_at: str | None
+    method: str = Field(
+        description=(
+            "How the attribution was computed. Tree models use SHAP; Ridge and "
+            "the persistence baseline are solved exactly in closed form."
+        )
+    )
+    base_value: float = Field(
+        description="The model's expected output before any feature moves it."
+    )
+    rows: int
+    features: list[FeatureImportanceResponse]
+    cached: bool
+    caveat: str = Field(description="ETH-1: attribution describes the model, not the air.")
+
+
 # --- Routes -----------------------------------------------------------------
 
 
@@ -262,8 +302,72 @@ async def list_models(
     ]
 
 
+@router.get(
+    "/models/{model_id}/importance",
+    response_model=ImportanceResponse,
+    summary="Global feature importance for one registered model",
+)
+async def model_importance(
+    session: SessionDep,
+    settings: SettingsDep,
+    model_id: int,
+    sample_rows: Annotated[
+        int,
+        Query(
+            ge=50,
+            le=5000,
+            description=(
+                "Rows sampled for the summary (task 8.4). The ranking settles "
+                "by ~100; cost is linear in rows and in tree depth."
+            ),
+        ),
+    ] = explain.DEFAULT_SAMPLE_ROWS,
+    perturbation: Annotated[
+        str,
+        Query(
+            description=(
+                "tree_path_dependent follows the trees' own splits and needs no "
+                "reference data; interventional integrates over a background "
+                "sample, which is truer to the data and slower."
+            )
+        ),
+    ] = explain.PATH_DEPENDENT,
+    use_cache: Annotated[bool, Query()] = True,
+) -> ImportanceResponse:
+    """What the model relies on overall (tasks 8.1, 8.2, 8.4).
+
+    Returns 404 when the model or its artifact is missing, and 503 when SHAP
+    cannot be loaded — the difference matters, because only the first is
+    fixable by changing the request.
+    """
+    if perturbation not in explain.PERTURBATIONS:
+        raise RequestValidationError(
+            [
+                {
+                    "loc": ("query", "perturbation"),
+                    "msg": f"must be one of {list(explain.PERTURBATIONS)}",
+                    "type": "value_error",
+                }
+            ]
+        )
+
+    loaded, importance, cached = serving.global_importance(
+        session,
+        settings,
+        model_id=model_id,
+        sample_rows=sample_rows,
+        perturbation=perturbation,
+        use_cache=use_cache,
+    )
+
+    return ImportanceResponse.model_validate(
+        {**loaded.as_dict(), **importance.as_dict(), "cached": cached}
+    )
+
+
 __all__ = [
     "LADDER_NAMES",
+    "ImportanceResponse",
     "RegisteredModelResponse",
     "TrainingRequest",
     "TrainingResponse",

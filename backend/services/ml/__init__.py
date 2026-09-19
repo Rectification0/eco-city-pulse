@@ -12,6 +12,8 @@ and each is worth reading on its own:
 - ``evaluation``    — MAE, RMSE, R², and skill against the baseline (7.11)
 - ``registry``      — artifact plus the ``models`` row (7.12)
 - ``training``      — the orchestration
+- ``explain``       — SHAP attribution, exact for Ridge and the baseline (8.1-8.4)
+- ``serving``       — load a registered model and replay its feature contract
 
 Two commitments run through all of it:
 
@@ -28,15 +30,18 @@ would hide it (AC-7).
 from services.ml import (
     classical,
     evaluation,
+    explain,
     models,
     preprocessing,
     registry,
     selection,
+    serving,
     splitting,
     targets,
     training,
 )
 from services.ml.evaluation import Metrics
+from services.ml.explain import Attribution, GlobalImportance, ModelExplainer
 from services.ml.models import NaiveLag1, build_ladder
 from services.ml.registry import RegisteredModel
 from services.ml.splitting import TimeSplit
@@ -45,8 +50,11 @@ from services.ml.training import HorizonReport, ModelReport, TrainingReport, run
 
 __all__ = [
     "DEFAULT_HORIZONS",
+    "Attribution",
+    "GlobalImportance",
     "HorizonReport",
     "Metrics",
+    "ModelExplainer",
     "ModelReport",
     "NaiveLag1",
     "RegisteredModel",
@@ -55,11 +63,13 @@ __all__ = [
     "build_ladder",
     "classical",
     "evaluation",
+    "explain",
     "models",
     "preprocessing",
     "registry",
     "run",
     "selection",
+    "serving",
     "splitting",
     "target_name",
     "targets",
