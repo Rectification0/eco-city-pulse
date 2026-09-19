@@ -9,7 +9,10 @@ pydantic-settings>=2.6,<3.0        # SEC-2: settings sourced from env
 python-multipart>=0.0.9,<1.0       # CSV/JSON upload endpoint (task 2.3)
 
 # --- Persistence ---
-SQLAlchemy>=2.0,<3.0
+# 2.0.36 is a floor, not a preference: earlier 2.0.x splits a stringified
+# annotation on commas, so `Mapped[list[str] | dict[str, Any]]` in db/models.py
+# reaches ForwardRef as 'str] | dict[str' and every import of the app dies.
+SQLAlchemy>=2.0.36,<3.0
 psycopg[binary]>=3.2,<4.0
 alembic>=1.14,<2.0                 # schema migrations (task 1.6)
 

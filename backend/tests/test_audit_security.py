@@ -12,7 +12,9 @@ An audit that cannot express "this one, because…" gets silenced instead.
 from __future__ import annotations
 
 import re
+import types
 from pathlib import Path
+from typing import Union, get_args, get_origin
 
 import pytest
 from fastapi.routing import APIRoute
@@ -61,6 +63,25 @@ def test_every_endpoint_declares_a_response_model(app) -> None:
     assert undeclared == [], f"routes without a response_model: {undeclared}"
 
 
+def _body_members(annotation: object) -> list[object]:
+    """The annotation split into the alternatives a caller may actually send.
+
+    Several endpoints declare `Model | None` because the body is optional --
+    POST with nothing and the service runs on its defaults. That is still a
+    closed contract, so the audit compares the *members* of the union rather
+    than the union object: `Model | None` passes, `dict | None` does not.
+    `NoneType` is dropped because "no body" is the absence of input, not an
+    unvalidated one.
+
+    Unwrapping is done here, not in the route signatures, because the
+    alternative -- dropping `| None` to satisfy the check -- would make a
+    missing body a 422 and break FEAT-02's "profile everything by default".
+    """
+    if get_origin(annotation) in (Union, types.UnionType):
+        return [arg for arg in get_args(annotation) if arg is not type(None)]
+    return [annotation]
+
+
 def test_every_request_body_is_a_pydantic_model(app) -> None:
     """A dict body would accept anything, which is the failure SEC-1 names."""
     loose = []
@@ -68,15 +89,25 @@ def test_every_request_body_is_a_pydantic_model(app) -> None:
         field = getattr(route, "body_field", None)
         if field is None:
             continue
-        annotation = field.type_
-        # A file upload is not a BaseModel and cannot be; it is validated by
-        # size and content type in the handler instead (task 2.3).
-        if getattr(annotation, "__name__", "") in {"UploadFile", "bytes"}:
-            continue
-        if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
-            loose.append((route.path, annotation))
+        for member in _body_members(field.type_):
+            # A file upload is not a BaseModel and cannot be; it is validated by
+            # size and content type in the handler instead (task 2.3).
+            if getattr(member, "__name__", "") in {"UploadFile", "bytes"}:
+                continue
+            if not (isinstance(member, type) and issubclass(member, BaseModel)):
+                loose.append((route.path, member))
 
     assert loose == [], f"routes with a non-model body: {loose}"
+
+
+def test_an_optional_body_still_has_to_name_a_model(app) -> None:
+    """The unwrapping above must not become a hole: `X | None` is accepted
+    only because X is checked, so a union hiding a raw dict still fails."""
+    assert _body_members(dict | None) == [dict]
+    assert not all(
+        isinstance(m, type) and issubclass(m, BaseModel)
+        for m in _body_members(dict | None)
+    )
 
 
 def test_the_error_envelope_is_the_only_error_shape(app) -> None:
