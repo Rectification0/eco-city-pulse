@@ -648,6 +648,121 @@ bounded, because t-SNE is quadratic.
 
 ---
 
+## ML pipeline
+
+FEAT-05 (specs §6.3, design §10). Three horizons — PM2.5 at **+1h, +6h, +24h** —
+as three independent regression problems, because the 1-hour problem is nearly
+persistence and the 24-hour problem is nearly climatology.
+
+```bash
+cd backend && python -m scripts.train_models          # all three horizons
+python -m scripts.train_models --horizon 1 --no-classical    # fast
+curl -X POST localhost:8000/api/v1/ml/train | jq      # or over the API
+curl localhost:8000/api/v1/ml/models | jq             # the registry
+```
+
+```
+Raw Data → Impute/Clean → Time-Aware Split → Feature Selection → Scale/Encode
+  → Train Models → Cross-Validation → Model Registry
+```
+
+### The baseline is a real model
+
+**Naive Lag-1** — "the next hour looks like this hour" — is fitted, scored and
+registered like every other rung. That is not ceremony. Hourly PM2.5 is strongly
+autocorrelated, so persistence achieves an R² above 0.78 at one hour, and any
+report quoting R² without that comparison would make an unremarkable model look
+excellent.
+
+| Model | Purpose |
+|-------|---------|
+| **Naive Lag-1** | Honest floor. Anything that cannot beat it adds nothing. |
+| **Ridge** | Linear reference, regularized against collinear pollutants. |
+| **Random Forest** | Non-linear, low-tuning benchmark. |
+| **XGBoost** | Primary production model. |
+
+On the 120-day demo dataset, at +1h: persistence MAE **7.42**, XGBoost **6.46** —
+**13% skill** (AC-7). At +24h the ranking inverts and Ridge edges out XGBoost;
+that is reported rather than hidden, and it is what a 24-hour horizon on this
+data looks like.
+
+**ARIMA and Prophet** sit beside the ladder, not on it. Both are univariate —
+one station's PM2.5 and nothing else — and they answer a different question:
+how much does the multivariate pipeline actually buy over classical methods on
+the same series? ARIMA's parameters are fitted once and re-applied at sampled
+origins for genuine *h*-step forecasts. Prophet is a trend-and-seasonality curve
+that never consults a recent reading, which is why its score is identical at
+every horizon — a long-range floor, not an *h*-step comparison.
+
+### Leakage is designed against, then proved
+
+design §10.1 calls leakage "the dominant failure mode in time-series ML". Four
+defences, and the run *computes the evidence* rather than asserting it:
+
+| Safeguard | How |
+|-----------|-----|
+| **Chronological split** | The cut is a **timestamp**, not a row position. Splitting a multi-station frame positionally would put one whole station in train and another in test, both spanning the same period — every "future" test hour having a same-hour twin in training. |
+| **Embargo** | The last *horizon* hours before the cut are **purged**. A training row at *t* carries the target at *t + h*; if that lands past the cut, the row has the answer to a test question written on it. |
+| **Scaler discipline** | The scaler is a step *inside* each model's pipeline, so there is no call site at which it could be handed test rows. The audit then confirms it from the fitted object. |
+| **Fitted stages follow the split** | Feature selection *and* the Phase 5 log-transform decision are fitted on training rows only. The split timestamp is computed **before** the feature transformer is fitted. |
+| **Expanding-window CV** | `TimeSeriesSplit` over unique timestamps with the embargo as `gap`. Never K-Fold — that trains on Thursday to predict Tuesday. |
+
+Every response and every CLI run carries the audit:
+
+```json
+"leakage_audit": {
+  "train_end": "2026-09-01T09:00:00+00:00",
+  "test_start": "2026-09-01T11:00:00+00:00",
+  "gap_hours": 2.0, "embargo_hours": 1,
+  "train_precedes_test": true, "embargo_respected": true,
+  "no_overlapping_rows": true, "no_shared_timestamps": true
+}
+```
+
+A claim of no leakage that cannot be inspected is a claim taken on faith, and
+AC-8 is not a matter of faith. The same checks run as tests
+(`test_ml_training.py`) against the demo generator's autocorrelated series —
+**offline**, because an acceptance criterion that skips when no database is
+reachable is an acceptance criterion that is not checked.
+
+### Feature selection says why
+
+Two filters, both fitted on training rows: near-constant columns go, and one of
+each pair correlated above 0.95 goes — keeping whichever tracks the target more
+closely. `pm25` is protected, since it is the persistence baseline's only input.
+Every drop is recorded with its reason:
+
+```
+pm10        -> |r|=0.989 with pm25, which tracks the target more closely
+season_*    -> near-constant on the training window (var=0.00e+00)
+```
+
+(The season flags are constant because the demo window spans one season — the
+filter working, not failing.)
+
+### Registry
+
+Artifact and row are written together, so a registry row never points at a
+missing file:
+
+| Where | What |
+|-------|------|
+| `artifacts/<target>__<model>__<timestamp>.joblib` | The fitted estimator **plus its feature contract** — spec, fingerprint, selected columns in order, horizon, metrics |
+| `models` table | name, target, `features_used`, MAE/RMSE/R², `artifact_path` |
+
+Artifacts are compressed (a 200-tree forest is 52 MB raw, 17 MB at level 3) and
+registration is **append-only** — a retrain writes a new row, because
+overwriting would destroy the record of what was deployed when.
+
+The artifact carries the Phase 5 fingerprint so serving can verify that the
+features it is about to build are the ones the model was trained on, rather than
+trusting that nothing changed in between. Serving resolves its model **by name**
+(`xgboost`), not by "newest row": the registry holds the whole ladder so the
+Model Lab can compare it, and "newest" alone would make the served model an
+accident of iteration order.
+
+---
+
 ## Local development
 
 ### Database
@@ -742,6 +857,7 @@ eco-city-pulse/
 │   │   ├── quality/             # Missingness, imputation, outliers, pipeline
 │   │   ├── eda/                 # Profile, STL, cache, report, PCA/ESI, t-SNE
 │   │   ├── features/            # Spec, temporal, windows, transformer, store
+│   │   ├── ml/                  # Targets, splitting, models, registry, training
 │   │   ├── harmonizer.py        # UTC, decimal degrees, hourly resample
 │   │   ├── ingestion_service.py # The single write path
 │   │   ├── datasets.py          # The pandas boundary
@@ -751,7 +867,8 @@ eco-city-pulse/
 │   ├── scripts/
 │   │   ├── seed_demo.py         # python -m scripts.seed_demo
 │   │   ├── run_quality.py       # python -m scripts.run_quality
-│   │   └── build_features.py    # python -m scripts.build_features
+│   │   ├── build_features.py    # python -m scripts.build_features
+│   │   └── train_models.py      # python -m scripts.train_models
 │   ├── tests/
 │   ├── alembic.ini
 │   ├── entrypoint.sh            # Migrate, seed if empty, then serve
@@ -760,6 +877,7 @@ eco-city-pulse/
 ├── data/
 │   ├── raw/                     # Immutable landing zone — districts.geojson
 │   └── processed/               # Cleaned frame, reports, feature store, PCA model (generated)
+├── artifacts/                   # Model registry storage — .joblib (generated)
 ├── docker-compose.yml
 └── README.md
 ```
@@ -789,6 +907,7 @@ All configuration is environment-driven and parsed once in `backend/core/config.
 | `INGESTION_STARTUP_DELAY_SECONDS` | `30` | Grace period before the first scheduled run |
 | `UPLOAD_MAX_BYTES` | `10000000` | Ceiling for `POST /data/upload`, enforced on bytes actually read |
 | `AUTO_RUN_QUALITY` | `true` | Run the quality pipeline once, right after a fresh demo seed |
+| `MODEL_ARTIFACT_DIR` | `artifacts` | Model registry storage. Backed by the `model_artifacts` volume in compose, so registered models survive a restart — the registry rows point at files, and a lost mount would leave them dangling |
 
 ---
 
@@ -813,6 +932,8 @@ is the security boundary (SEC-1). Full contract at
 | `GET` | `/eda/cache` | Profile cache statistics | ✅ Phase 4 |
 | `POST` | `/eda/reduce` | PCA components, variance, loadings, ESI | ✅ Phase 6 |
 | `POST` | `/eda/tsne` | t-SNE 2D projection (EDA Studio only) | ✅ Phase 6 |
+| `POST` | `/ml/train` | Train the ladder and register the results | ✅ Phase 7 |
+| `GET` | `/ml/models` | The model registry, newest first | ✅ Phase 7 |
 | `POST` | `/ml/predict` | PM2.5 forecast with reasoning | Phase 9 |
 
 **`POST /data/ingest` returns 200 even when a source fails.** That is DR-1
@@ -839,7 +960,7 @@ Errors share one envelope, produced by the handlers in `core/exceptions.py`:
 | **4** | EDA & statistical engine — profile, STL, cache, report (FEAT-02) | ✅ Complete |
 | **5** | Feature engineering — temporal, lag, rolling, log; one shared transformer | ✅ Complete |
 | **6** | Dimensionality reduction & ESI — PCA, loadings, 0–100 index, t-SNE (FEAT-04) | ✅ Complete |
-| 7 | ML pipeline (FEAT-05) | ⬜ |
+| **7** | ML pipeline — three horizons, four models, leakage audit, registry (FEAT-05) | ✅ Complete |
 | 8 | Explainability — SHAP | ⬜ |
 | 9 | Prediction service (FEAT-06) | ⬜ |
 | 10 | Frontend — Dashboard, EDA Studio, Model Lab | ⬜ |
@@ -864,5 +985,5 @@ Only public environmental data is used. Any text analysis aggregates metrics onl
 | Mod 1 | Data Collection & Structure | Multi-source API & CSV ingestion, JSON validation, DB storage |
 | Mod 2 | Data Preprocessing | MCAR/MAR analysis, MICE imputation, IQR / Z-score / Isolation Forest anomaly vote — **implemented** (Phase 3) |
 | Mod 3 | Descriptive Stats & Visualization | Univariate profile, Pearson + Spearman correlation, histograms — **implemented** (Phase 4) |
-| Mod 4 | Dimensionality & Time-Series | STL decomposition with strength measures — **implemented** (Phase 4); PCA-based ESI and t-SNE — **implemented** (Phase 6) |
+| Mod 4 | Dimensionality & Time-Series | STL decomposition with strength measures — **implemented** (Phase 4); PCA-based ESI and t-SNE — **implemented** (Phase 6); ARIMA/Prophet baselines — **implemented** (Phase 7) |
 | Mod 5 | Advanced Visualization | Self-contained HTML report with inline SVG charts — **implemented** (Phase 4); parallel coordinates in Phase 10 |

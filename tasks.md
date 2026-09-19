@@ -137,20 +137,20 @@
 
 | # | Task | Traces | Pri | Status |
 |---|------|--------|-----|--------|
-| 7.1 | Define the three targets — PM2.5 at **+1h, +6h, +24h**; correct forward target shift | specs §6.3 | M | [ ] |
-| 7.2 | **Time-aware split** — strictly chronological, no shuffling | AC-8 | M | [ ] |
-| 7.3 | Scale/encode with scaler **fit on train only** | AC-8 | M | [ ] |
-| 7.4 | Feature selection stage | specs §6.3 | M | [ ] |
-| 7.5 | **Naive Lag-1** baseline model | AC-7 | M | [ ] |
-| 7.6 | **Ridge Regression** model | specs §6.3 | M | [ ] |
-| 7.7 | **Random Forest** model | specs §6.3 | M | [ ] |
-| 7.8 | **XGBoost** model — primary production model | FEAT-05 | M | [ ] |
-| 7.9 | **ARIMA / Prophet** classical time-series baselines | specs §3.1 | S | [ ] |
-| 7.10 | Cross-validation with `TimeSeriesSplit` / expanding window (never K-Fold) | AC-8 | M | [ ] |
-| 7.11 | Evaluation — MAE, RMSE, R² per model per horizon | FEAT-05 | M | [ ] |
-| 7.12 | Model registry — persist artifact to storage, write metrics + `artifact_path` to `models` | FEAT-05 | M | [ ] |
-| 7.13 | **Leakage audit test** — assert every training timestamp precedes every test timestamp; assert scaler never saw test data | AC-8, OBJ-5 | M | [ ] |
-| 7.14 | Baseline-beating test — XGBoost MAE < Naive Lag-1 MAE at the 1h horizon | AC-7 | M | [ ] |
+| 7.1 | Define the three targets — PM2.5 at **+1h, +6h, +24h**; correct forward target shift | specs §6.3 | M | [x] |
+| 7.2 | **Time-aware split** — strictly chronological, no shuffling | AC-8 | M | [x] |
+| 7.3 | Scale/encode with scaler **fit on train only** | AC-8 | M | [x] |
+| 7.4 | Feature selection stage | specs §6.3 | M | [x] |
+| 7.5 | **Naive Lag-1** baseline model | AC-7 | M | [x] |
+| 7.6 | **Ridge Regression** model | specs §6.3 | M | [x] |
+| 7.7 | **Random Forest** model | specs §6.3 | M | [x] |
+| 7.8 | **XGBoost** model — primary production model | FEAT-05 | M | [x] |
+| 7.9 | **ARIMA / Prophet** classical time-series baselines | specs §3.1 | S | [x] |
+| 7.10 | Cross-validation with `TimeSeriesSplit` / expanding window (never K-Fold) | AC-8 | M | [x] |
+| 7.11 | Evaluation — MAE, RMSE, R² per model per horizon | FEAT-05 | M | [x] |
+| 7.12 | Model registry — persist artifact to storage, write metrics + `artifact_path` to `models` | FEAT-05 | M | [x] |
+| 7.13 | **Leakage audit test** — assert every training timestamp precedes every test timestamp; assert scaler never saw test data | AC-8, OBJ-5 | M | [x] |
+| 7.14 | Baseline-beating test — XGBoost MAE < Naive Lag-1 MAE at the 1h horizon | AC-7 | M | [x] |
 
 **Exit criteria:** models trained and registered; leakage audit passes; XGBoost beats the naive baseline. *(AC-7, AC-8)*
 
