@@ -65,6 +65,10 @@ reports/*.pdf
 # generated from the running app, and the EDA report from the database. A
 # generated file in version control drifts from its source and conflicts on
 # every merge, so the command is the deliverable rather than its output.
+#
+# Note these are patterns, not the whole directory: docs/ also holds hand-
+# written design notes (multi-city.md, observation-merge.md, retention.md)
+# which ARE committed. Ignoring docs/ wholesale would silently drop them.
 docs/openapi.json
 docs/*.html
 docs/*.pdf

@@ -195,6 +195,7 @@ export interface SourceHealth {
   last_run: string | null
   domain: string | null
   requires_credentials: boolean
+  is_synthetic: boolean
   credentials_configured: boolean
   observation_count: number
   last_observation_at: string | null
@@ -204,6 +205,7 @@ export interface SourceHealth {
 export interface SourcesResponse {
   sources: SourceHealth[]
   ingestion_mode: IngestionMode
+  analytics_source_scope: 'demo' | 'live' | 'all'
   generated_at: string
 }
 

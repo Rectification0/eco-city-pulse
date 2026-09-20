@@ -152,12 +152,29 @@ instead:
    its own series, which is what the quality engine is for.
 
 **Per-row source attribution is gone.** `source_id` now means "which feed wrote
-last", not "where this row came from". Per-source health and counts live in
-`data_sources` and `ingestion_runs`; what is no longer answerable is which feed
-supplied a *particular column* of a particular row. Recovering it would need a
-per-field provenance map, which is a large amount of machinery for a question
-nothing currently asks — and for the five measurement columns the answer is
-already fixed by §3.3 in all but the contested two.
+last", not "where this row came from". What is no longer answerable from a row
+is which feed supplied a *particular column* of it. Recovering that would need
+a per-field provenance map, which is a lot of machinery for a question nothing
+currently asks — and for the five measurement columns §3.3 already fixes the
+answer in all but the contested two.
+
+**This leaves one visible wart.** `/data/sources` derives `observation_count`
+by grouping `observations.source_id`, which now counts rows a feed happened to
+write *last* rather than rows it contributed to. On a merged station-hour the
+losers of that race count zero: after a live ingest the Admin table reads
+
+```
+AQICN            healthy   obs=10
+OpenWeather      healthy   obs=0     <- contributed to 11 rows
+TomTom Traffic   healthy   obs=11
+```
+
+which is not a broken feed and does not look like anything else. The honest
+number is the ingestion log's `records_written` per source, which survives
+merging because it records what a run did rather than what the table retained.
+`last_observation_at` has the same flaw for the same reason. Neither is fixed
+yet; `data_sources.last_run` and the ingestion log are meanwhile the
+trustworthy view of whether a feed is working.
 
 **Rows ingested before §3.1** keep their original coordinates, so historical
 AQICN rows stay at the monitor's position and merge with nothing. They are not

@@ -35,8 +35,8 @@ export default function Admin() {
         {(data) => (
           <Card
             title="Source health"
-            subtitle={`Ingestion mode: ${data.ingestion_mode}`}
-            note="A keyless live source reports as offline. That is the expected demo state, not a failure: the platform runs end to end with every live API disabled (DR-1, AC-2)."
+            subtitle={`Ingestion mode: ${data.ingestion_mode} · analytics reading: ${data.analytics_source_scope}`}
+            note="A keyless live source reports as offline. That is the expected demo state, not a failure: the platform runs end to end with every live API disabled (DR-1, AC-2). The analytics scope decides which provenance every EDA, training and forecast request reads when it names no sources — so a source can be healthy and ingesting while the charts deliberately read the other one."
           >
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
@@ -58,6 +58,17 @@ export default function Admin() {
                         <span className="text-slate-200">{source.name}</span>
                         {source.domain && (
                           <span className="ml-2 text-xs text-slate-500">{source.domain}</span>
+                        )}
+                        {/* ETH-1: a reader has to be able to tell a generated
+                            series from a measured one without knowing which
+                            source name means which. */}
+                        {source.is_synthetic && (
+                          <span
+                            className="ml-2 rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-300/90"
+                            title="Values are generated, not measured."
+                          >
+                            synthetic
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-2">

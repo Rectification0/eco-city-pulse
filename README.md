@@ -86,6 +86,7 @@ the tests actually assert.
 | **ML** (FEAT-05) | `ml/` | 3 horizons × 4 models. Chronological split + embargo, scaler inside the model, expanding-window CV (AC-7, AC-8) |
 | **Explainability** | `ml/explain.py` | `prediction = base_value + Σ contributions`, asserted for every model |
 | **Prediction** (FEAT-06) | `ml/prediction.py`, `ml/intervals.py` | The specs §8 contract exactly; interval calibrated on the model's own held-out residuals (AC-9) |
+| **Retention** | `retention.py` | Sweeps superseded and orphaned model artifacts; never deletes a `models` row or an observation (AC-4, AC-5) |
 
 Two commitments run through all of it:
 
@@ -103,6 +104,7 @@ python -m scripts.seed_demo --days 120   # offline demo dataset
 python -m scripts.run_quality            # impute, flag anomalies
 python -m scripts.build_features         # engineered feature store
 python -m scripts.train_models           # train + register the model ladder
+python -m scripts.prune --dry-run        # retention sweep (drop the flag to apply)
 python -m scripts.export_docs --report   # API reference + EDA report → docs/
 ```
 
@@ -217,6 +219,7 @@ real default and none is ever committed** (SEC-2). Full list in
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `INGESTION_MODE` | `demo` | `scheduled` · `manual` · `upload` · `demo` |
+| `ANALYTICS_SOURCE_SCOPE` | `demo` | Which provenance EDA/training/serving read when a request names no `source_ids`: `demo` · `live` · `all` |
 | `FRONTEND_ORIGINS` | `http://localhost:8080,http://localhost:5173` | CORS allowlist; never `*` (SEC-3) |
 | `POSTGRES_HOST` / `POSTGRES_PORT` | `db` / `5432` | What the backend connects to |
 | `POSTGRES_HOST_PORT` | `5433` | What the container publishes on the host |
@@ -228,6 +231,7 @@ real default and none is ever committed** (SEC-2). Full list in
 | `UPLOAD_MAX_BYTES` | `10000000` | Ceiling for `POST /data/upload` |
 | `MODEL_ARTIFACT_DIR` | `artifacts` | Backed by the `model_artifacts` volume so registry rows never dangle |
 | `DB_ECHO` | `false` | Log every SQL statement; separate from `DEBUG` |
+| `ARTIFACT_KEEP_PER_MODEL` · `RUN_LOG_RETENTION_DAYS` · `UNSCORED_PREDICTION_RETENTION_DAYS` | `3` · `90` · `30` | Retention windows; `observations` is never pruned |
 
 ---
 
@@ -283,6 +287,7 @@ Errors share one envelope from `core/exceptions.py`:
 | **9** | Prediction service — conformal intervals, persisted forecasts (FEAT-06) | ✅ Complete |
 | **10** | Frontend — Dashboard, EDA Studio, Model Lab, Admin | ✅ Complete |
 | **11** | Security, quality & release — audits as tests, AC walkthrough | ✅ Complete |
+| **Post-release** | Provenance scope · cross-source merge · retention | ✅ Complete |
 
 Track detail in [`tasks.md`](./tasks.md).
 

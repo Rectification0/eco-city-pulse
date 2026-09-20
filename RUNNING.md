@@ -335,6 +335,13 @@ python -m scripts.train_models --no-classical   # 4. train + register  (a few mi
 
 Step 4 is the one the container does not do for you.
 
+> **Check `ANALYTICS_SOURCE_SCOPE` before step 3.** Steps 3 and 4 read whatever
+> the scope points at. On `demo` — the default — that is the bundle step 2 just
+> seeded. On `live` it is the measured feeds instead, which start at zero rows
+> and grow about eleven an hour, so `train_models` stops with *"Not enough
+> observations to train: 32 rows, need at least 124"*. That message is correct
+> and the fix is one line in `.env`, not a broken install.
+
 > **`build_features` is optional.** `python -m scripts.build_features` writes the
 > feature store to `data/processed/` for inspection. Training builds its own
 > features in memory, so skipping it changes nothing about the running system.
@@ -368,11 +375,15 @@ Open <http://localhost:5173>.
 | **Dashboard** | Four tiles with numbers; a dark map with coloured districts; a 48-hour line with orange diamond forecast points and error bars |
 | **EDA Studio** | Ten charts — missingness, histogram + boxplot, correlation heatmap, four STL panels, parallel coordinates, t-SNE |
 | **Model Lab** | Twelve rows (four models × three horizons), a skill column, a SHAP bar chart, and a working forecast form |
-| **Admin** | Six sources (five `offline`, one `healthy`), one ingestion run, empty quarantine, a threshold form |
+| **Admin** | Six sources, the active ingestion mode and analytics scope, the ingestion log, empty quarantine, a threshold form |
 | **Every screen** | The amber disclaimer in the footer |
 
 Some sources reading `offline` is **correct**, not a failure: a live API with no
-key is configured and deliberately never contacted.
+key is configured and deliberately never contacted. On a fresh demo install
+five are `offline` and only the demo bundle is `healthy`; each source turns
+`healthy` the first time it completes a run, so after a live ingest the three
+upstreams do too. Each row also reports `is_synthetic`, which is what separates
+the generated bundle from a measured feed.
 
 ### By command
 
@@ -385,7 +396,9 @@ pytest tests/test_audit_*.py           # the security, privacy and ethics audits
 Or check the API directly:
 
 ```bash
+# 11 districts either way, but which provenance answers depends on the scope
 curl localhost:8000/api/v1/data/observations/latest | jq '.readings | length'   # 11
+curl localhost:8000/api/v1/data/sources | jq '.analytics_source_scope'         # your setting
 curl localhost:8000/api/v1/ml/models | jq 'length'                             # 12
 curl -X POST localhost:8000/api/v1/ml/predict \
   -H 'Content-Type: application/json' \

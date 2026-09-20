@@ -115,12 +115,14 @@ data_sources (
   name          TEXT,
   api_url       TEXT,
   status        TEXT,          -- healthy | degraded | offline
-  last_run      TIMESTAMPTZ
+  last_run      TIMESTAMPTZ,
+  is_synthetic  BOOLEAN        -- generated, not measured (migration 0004)
 )
 
 observations (
   id            BIGSERIAL PRIMARY KEY,
-  source_id     INT REFERENCES data_sources(id),
+  source_id     INT REFERENCES data_sources(id),   -- who wrote last
+  provenance    TEXT,          -- measured | synthetic (migration 0005)
   timestamp     TIMESTAMPTZ,   -- always UTC
   lat           DOUBLE PRECISION,   -- decimal degrees
   lon           DOUBLE PRECISION,
@@ -129,7 +131,8 @@ observations (
   temp          DOUBLE PRECISION,
   humidity      DOUBLE PRECISION,
   traffic_score DOUBLE PRECISION,
-  is_anomaly    BOOLEAN DEFAULT FALSE
+  is_anomaly    BOOLEAN DEFAULT FALSE,
+  UNIQUE (provenance, timestamp, lat, lon)
 )
 
 models (
@@ -149,11 +152,20 @@ predictions (
   model_id        INT REFERENCES models(id),
   target_time     TIMESTAMPTZ,
   predicted_value DOUBLE PRECISION,
-  actual_value    DOUBLE PRECISION   -- backfilled for drift monitoring
+  actual_value    DOUBLE PRECISION,  -- backfilled for drift monitoring
+  lat             DOUBLE PRECISION,  -- which station it was for (task 9.6)
+  lon             DOUBLE PRECISION
 )
 ```
 
 **Indexing:** composite index on `observations(timestamp, lat, lon)` drives both time-series windows and map queries. PostGIS geometry derived from `lat`/`lon` for district joins against the GeoJSON boundaries.
+
+**The unique key is provenance, not source.** Three live feeds describe one
+station-hour and each fills a different part of it, so keying on `source_id`
+gave three rows of one column each and no row that was the joined state the
+table exists to hold. Keying on provenance lets them merge while keeping the
+demo bundle — same centroids, same hours — out of rows presented as
+measurement. See [`docs/observation-merge.md`](./docs/observation-merge.md).
 
 `predictions.actual_value` is deliberately nullable — it is backfilled once the real observation for `target_time` arrives, which turns the table into a live model-monitoring dataset.
 
@@ -350,6 +362,10 @@ Leakage is the dominant failure mode in time-series ML, so it is designed agains
 | t-SNE confined to EDA | No stable out-of-sample transform; unsafe in a production inference path. |
 | Hourly resampling as a hard contract | Lag and rolling features are only well-defined on a uniform time grid. |
 | Demo mode as the default | Guarantees the platform demonstrates end-to-end with zero API keys and zero network. |
+| One provenance per request, chosen explicitly | Pooling a seeded demo bundle with live readings produces statistics that describe neither, and the alternative — switching automatically once real data appears — silently redraws every chart the instant the first ingest lands. |
+| Merge a station-hour across feeds, keyed on provenance | The table claims to hold the joined environmental state; keyed on `source_id` it held a third of it, and no live row carried both PM2.5 and traffic. |
+| Per-field source authority | `temp` arrives from two feeds that disagree. Declaring who owns a field makes the merged value independent of ingestion order, rather than decided by tuple position in the adapter registry. |
+| Retention deletes artifacts, never rows or measurements | `predictions.model_id` is `ON DELETE CASCADE`, so reclaiming a file by dropping its registry row would take the drift dataset with it. Observations cost under 100 MB a year and are flag-never-delete by policy (AC-4, AC-5). |
 
 ---
 
