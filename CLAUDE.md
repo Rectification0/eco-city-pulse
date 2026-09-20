@@ -42,6 +42,12 @@ host port **5433**).
 - Services raise domain exceptions from `core/exceptions.py`; handlers map them
   to one error envelope. Routes carry no `try/except`.
 - Every request and response is a Pydantic model (SEC-1).
+- **Any read of `observations` resolves its scope first** — call
+  `datasets.resolve_source_ids(session, source_ids, settings=settings)` and pass
+  the result to the query, the cache fingerprint and `describe_window` alike. A
+  route that builds its own `select(Observation)` pools synthetic and measured
+  rows into one answer (ETH-1); two of them shipped that way once already. See
+  `docs/observation-merge.md`.
 - Secrets are read only in `core/config.py`, only from the environment (SEC-2).
 - Optional heavy libraries (statsmodels, xgboost, prophet, shap) are imported
   **lazily** so one unavailable extra cannot take down the whole app at startup.

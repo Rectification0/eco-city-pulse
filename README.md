@@ -16,6 +16,7 @@ Data Collection → Data Engineering → EDA → Statistical Analysis → Visual
 | [`tasks.md`](./tasks.md) | 12-phase implementation plan with requirement traceability |
 | [`RUNNING.md`](./RUNNING.md) | **Start here to run it** — both routes, verification, troubleshooting |
 | [`CLAUDE.md`](./CLAUDE.md) | Conventions and per-phase workflow for contributors |
+| [`docs/`](./docs) | Design notes: source merge, retention, the multi-city plan |
 
 > Design rationale lives in `design.md` and in the module docstrings, not here.
 > This file is for getting the thing running and finding your way around.
@@ -40,14 +41,12 @@ On first boot the backend applies migrations, loads the demo dataset, and runs
 the data quality pipeline before serving — nothing to run afterwards. Cold start
 takes a minute or two; `docker compose logs -f backend` shows progress.
 
-> The database publishes on **5433**, not 5432, so it does not collide with a
-> PostgreSQL already on the machine. Inside the compose network the backend
-> still reaches it on 5432.
+> The database publishes on **5433** so it does not collide with a PostgreSQL
+> already on the machine; inside the compose network it is still 5432.
 
-**No API keys are required.** The platform defaults to `INGESTION_MODE=demo` and
-runs entirely offline — a hard requirement (DR-1), not a convenience. A source
-with no key reports as `offline` and is never contacted; traffic falls back to a
-clearly-labelled synthetic series.
+**No API keys are required** — `INGESTION_MODE=demo` runs entirely offline, a
+hard requirement (DR-1) rather than a convenience. Keys, live ingestion and the
+analytics scope are covered in [`RUNNING.md`](./RUNNING.md).
 
 ---
 
@@ -65,9 +64,9 @@ Three containers (design §4):
 frontend (nginx:80) ──/api/──► backend (uvicorn:8000) ──► db (postgres:5432)
 ```
 
-**Layering rule:** `backend/api/routes/*` contain no analytics logic. They
-validate input, call a service, and shape the response. All pandas/scikit-learn
-work lives in `backend/services/`, and all persistence in `backend/db/`.
+**Layering rule:** routes validate input, call a service, shape the response —
+no analytics logic. Analysis lives in `backend/services/`, persistence in
+`backend/db/`.
 
 ---
 
@@ -88,13 +87,11 @@ the tests actually assert.
 | **Prediction** (FEAT-06) | `ml/prediction.py`, `ml/intervals.py` | The specs §8 contract exactly; interval calibrated on the model's own held-out residuals (AC-9) |
 | **Retention** | `retention.py` | Sweeps superseded and orphaned model artifacts; never deletes a `models` row or an observation (AC-4, AC-5) |
 
-Two commitments run through all of it:
-
-- **Nothing is fitted on data that is later scored** — not the scaler, not the
-  feature selection, not the log-transform decision. Each run reports the
-  timestamps that prove it (AC-8).
-- **No causal claim anywhere** (ETH-1). Correlation, PCA loadings and SHAP
-  attributions all ship with caveats inside the payload.
+Two commitments run through all of it: **nothing is fitted on data that is later
+scored** — not the scaler, not the feature selection, not the log-transform
+decision, and each run reports the timestamps that prove it (AC-8) — and **no
+causal claim anywhere** (ETH-1), with every correlation, loading and SHAP value
+shipping its caveat inside the payload.
 
 ### CLI
 
@@ -114,14 +111,9 @@ python -m scripts.export_docs --report   # API reference + EDA report → docs/
 
 ### Database
 
-| Setup | How | PostGIS |
-|-------|-----|---------|
-| **Container** (default) | `docker compose up` — `postgis/postgis:16-3.4` | ✅ included |
-| **Existing local server** | Point `POSTGRES_HOST`/`POSTGRES_PORT` at it in `.env` | ⚠️ only if installed separately |
-
-> **PostGIS caveat.** A stock PostgreSQL does not ship PostGIS. Without it
-> everything works *except* the spatial features — district GeoJSON joins and
-> map layers. Use the compose database for those.
+The compose database (`postgis/postgis:16-3.4`) includes PostGIS. A stock local
+PostgreSQL usually does not, and without it everything works *except* the
+spatial features — district joins and map layers.
 
 ### Backend
 
@@ -158,55 +150,22 @@ pytest tests/test_audit_*.py            # the SEC/PRIV/ETH audits
 ruff check --select F,I,E9 .
 ```
 
-The audits are **executable**, not a checklist: an endpoint added without a
-response model, a credential pasted into a compose file, a `allow_origins=["*"]`,
-a PII-shaped column, or a caption that claims causation each fail the suite.
+The audits are **executable**, not a checklist: an endpoint without a response
+model, a credential in a compose file, `allow_origins=["*"]`, a PII-shaped
+column or a caption claiming causation each fail the suite. Fixtures blank every
+API key and roll back every `db` test, so no test can reach the outside world.
 
-Fixtures strip every `Settings` variable from the environment and blank every
-upstream API key, so no test can be influenced by — or reach — the outside
-world. `db`-marked tests run inside a transaction that is rolled back.
-
-> If the host blocks scikit-learn's compiled extensions (Windows Application
-> Control), run the suite in the container instead — same code, Linux runtime.
-> `tests/` is excluded from the production image, so mount it, and cap the BLAS
-> threads or the tree models oversubscribe the VM and run ~15× slower:
->
-> ```bash
-> docker compose build backend
-> docker compose run --rm --no-deps -e OMP_NUM_THREADS=4 \
->   -v "$PWD/backend/tests:/app/tests" \
->   --entrypoint pytest backend -m "not db" -q
-> ```
->
-> Add `-m db` instead for the database tests (slow — each retrains the ladder).
+> Tests failing on a Windows host that blocks scikit-learn's compiled
+> extensions? Run them in the container instead — see
+> [`RUNNING.md`](./RUNNING.md).
 
 ---
 
 ## Project layout
 
-```
-eco-city-pulse/
-├── frontend/src/
-│   ├── charts/              # Plotly wrapper + the shared palette
-│   ├── components/          # Layout, Card, Async states, map, stat tiles
-│   ├── pages/               # Dashboard · EDA Studio · Model Lab · Admin
-│   └── services/api.ts      # The only place fetch appears
-├── backend/
-│   ├── api/routes/          # Thin HTTP layer — health, data, eda, ml
-│   ├── core/                # config.py (env secrets), exceptions.py (error envelope)
-│   ├── db/                  # models, session, migrations, init
-│   ├── services/
-│   │   ├── adapters/        # One module per source + the registry
-│   │   ├── quality/         # Missingness, imputation, outliers, pipeline
-│   │   ├── eda/             # Profile, STL, cache, report, PCA/ESI, t-SNE
-│   │   ├── features/        # Spec, temporal, windows, transformer, store
-│   │   └── ml/              # Targets, splitting, models, registry, training, SHAP
-│   ├── scripts/             # seed_demo · run_quality · build_features · train_models
-│   └── tests/
-├── data/{raw,processed}/    # Landing zone · generated analysis output
-├── artifacts/               # Model registry storage (generated)
-└── docker-compose.yml
-```
+`frontend/src` (charts · components · pages · `services/api.ts`) and `backend`
+(`api/routes` · `core` · `db` · `services` · `scripts` · `tests`). The annotated
+tree is [`design.md` §5](./design.md).
 
 ---
 

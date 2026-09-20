@@ -42,8 +42,9 @@ is a procurement question before it is an engineering one.
 ### 1.2 A station is a coordinate, not an entity
 
 `datasets.station_key` is `f"{lat:.5f},{lon:.5f}"`, and `observations` is
-unique on `(source_id, timestamp, lat, lon)`. There is no station table, no
-district table and no city column anywhere in the schema.
+unique on `(provenance, timestamp, lat, lon)` — the coordinate pair *is* the
+station's identity either way. There is no station table, no district table and
+no city column anywhere in the schema.
 
 This is the load-bearing constraint. Two cities can coexist in one
 `observations` table today only by accident of their coordinates differing, and
