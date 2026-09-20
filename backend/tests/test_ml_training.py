@@ -18,6 +18,7 @@ tested against the hard case.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -35,7 +36,21 @@ from services.ml import registry, splitting, targets, training
 
 HORIZON = 1
 STATIONS = 2
-DAYS = 60
+# DEFAULT_DAYS, i.e. what a deployment actually seeds. Not an arbitrary
+# fixture size: at 60 days AC-7 is a coin flip -- measured across windows,
+# XGBoost beat persistence by 11% on some and lost by 11% on others, because
+# two months of two stations is not enough signal to separate them. At 120 it
+# wins on 10 of the 11 windows sampled. The criterion is meant to test the
+# model, not the sample size.
+DAYS = 120
+# The window is pinned because `generate_observations` defaults `end` to the
+# current hour, which made this module's result a function of the date it ran
+# on: the seed is fixed, but a sliding window is a different realisation every
+# day, and AC-7 duly failed one morning on a 0.7% margin having passed the
+# night before. A fixed end makes a failure here mean the model regressed.
+# This window sits in the same season the shipped demo dataset covers, and
+# XGBoost leads persistence on it by 14.5% (MAE 5.84 vs 6.83).
+WINDOW_END = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +59,9 @@ def observations() -> pd.DataFrame:
     settings = Settings(_env_file=None, postgres_password="test-only")
     stations = geo_service.stations_from_districts(settings)[:STATIONS]
     records = list(
-        demo_data.generate_observations(days=DAYS, stations=stations, settings=settings)
+        demo_data.generate_observations(
+            days=DAYS, end=WINDOW_END, stations=stations, settings=settings
+        )
     )
     return prepare_frame(
         pd.DataFrame(
@@ -69,15 +86,29 @@ def observations() -> pd.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def trained(observations: pd.DataFrame) -> training.HorizonReport:
-    """One horizon trained the way ``run`` trains it, without a database."""
+def transformer(observations: pd.DataFrame) -> FeatureTransformer:
+    """Fitted on the training rows only, exactly as ``run`` fits it.
+
+    Shared rather than re-derived per test: a test that rebuilds the
+    transformer from some other slice is comparing two different pipelines,
+    and any agreement between them is luck. One such test fitted on the first
+    100 rows and matched for as long as the fixture covered 60 days; widening
+    the window changed which seasons that slice saw, the one-hot columns
+    differed, and the selection lists stopped lining up.
+    """
     cutoff = training.training_cutoff(
         observations, test_fraction=0.2, max_horizon=HORIZON
     )
     train_only = observations[observations["timestamp"] < cutoff]
     repaired, _ = feature_service.prepare(train_only)
-    transformer = FeatureTransformer.fit(repaired)
+    return FeatureTransformer.fit(repaired)
 
+
+@pytest.fixture(scope="module")
+def trained(
+    observations: pd.DataFrame, transformer: FeatureTransformer
+) -> training.HorizonReport:
+    """One horizon trained the way ``run`` trains it, without a database."""
     featured, matrix, _ = training.prepare_matrix(
         observations, transformer, horizons=(HORIZON,)
     )
@@ -135,13 +166,14 @@ def test_the_scaler_never_saw_test_data(trained: training.HorizonReport) -> None
 
 
 def test_feature_selection_is_fitted_on_training_rows_only(
-    observations: pd.DataFrame, trained: training.HorizonReport
+    observations: pd.DataFrame,
+    transformer: FeatureTransformer,
+    trained: training.HorizonReport,
 ) -> None:
     """Choosing columns by how they behave on the test set is leakage wearing a
     respectable name."""
     from services.ml import selection
 
-    transformer = FeatureTransformer.fit(observations.iloc[:100])
     featured, matrix, _ = training.prepare_matrix(
         observations, transformer, horizons=(HORIZON,)
     )

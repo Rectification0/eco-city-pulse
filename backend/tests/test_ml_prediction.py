@@ -423,6 +423,20 @@ def test_a_forecast_whose_hour_has_not_arrived_is_left_alone(
 
 @pytest.mark.db
 def test_backfill_on_an_empty_table_does_nothing(db_session: Session) -> None:
+    """The no-op case, on a table this test actually empties first.
+
+    It used to read whatever `predictions` happened to hold, which made it a
+    test of the developer's database rather than of `backfill_actuals`: two
+    rows left behind by an earlier `/ml/predict` call sat unnoticed until
+    their `target_time` fell behind `now`, and the assertion then failed for a
+    reason that had nothing to do with the code. The delete is discarded with
+    the surrounding transaction, so the real rows survive.
+    """
+    from db.models import Prediction
+
+    db_session.query(Prediction).delete()
+    db_session.flush()
+
     report = prediction.backfill_actuals(db_session)
 
     assert report.matched == 0
