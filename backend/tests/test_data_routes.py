@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.config import Settings
@@ -64,10 +65,25 @@ def test_sources_lists_every_registered_source(
 
 
 def test_a_keyless_source_is_listed_as_offline_not_omitted(
-    db_client: TestClient, db_settings: Settings
+    db_client: TestClient, db_session: Session, db_settings: Settings
 ) -> None:
     """"AQICN is offline for want of a key" is information; a missing row is
-    indistinguishable from a bug."""
+    indistinguishable from a bug.
+
+    The status is set here rather than assumed. ``status`` records how the last
+    run went, which is a different fact from whether a key is configured, and
+    it is *persisted*: once a developer has run a real ingest with a real key,
+    the committed row says ``healthy`` no matter what the test's settings
+    pretend about credentials. Reading it ambiently made this assertion a
+    statement about the developer's machine.
+    """
+    from db.models import DataSource, SourceStatus
+
+    ingestion_service.ensure_sources(db_session)
+    source = db_session.scalar(select(DataSource).where(DataSource.name == "AQICN"))
+    source.status = SourceStatus.OFFLINE
+    db_session.flush()
+
     body = db_client.get(_url(db_settings, "/data/sources")).json()
     aqicn = next(s for s in body["sources"] if s["name"] == "AQICN")
 

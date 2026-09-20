@@ -121,11 +121,52 @@ prediction request sees when it names no `source_ids`:
 | `live` | AQICN, OpenWeather, TomTom, uploads |
 | `all` | both, pooled |
 
-It stays on `demo` until the measured series is long enough to model on —
-ingesting for an afternoon gives you tens of rows against 31,680 synthetic
-ones, and pooling them would describe neither. `GET /data/sources` reports the
-active scope and flags each source's `is_synthetic`. A request that passes
-`source_ids` explicitly always overrides the setting.
+`GET /data/sources` reports the active scope and flags each source's
+`is_synthetic`. A request that passes `source_ids` explicitly always overrides
+the setting.
+
+### Watching live Delhi data
+
+```bash
+# 1. fetch once from all three upstreams (needs the keys in .env)
+curl -X POST localhost:8000/api/v1/data/ingest
+
+# 2. point the analytics at the measured sources
+#    ANALYTICS_SOURCE_SCOPE=live in .env, then restart
+
+# 3. open the Dashboard — it re-fetches every 5 minutes and the map's
+#    subtitle reports how old the newest reading is
+```
+
+One run writes **32 rows**: AQICN 10, OpenWeather 11, TomTom 11. The Dashboard
+polls the two observed panels (map, trendline) every five minutes. It does not
+poll the forecast panels, which are derived from that data — re-running three
+inferences to redraw the same three points is work nobody asked for.
+
+> **What live mode does not give you yet.** Each source writes its *own* row.
+> Nothing merges them, so no live row is the joined environmental state the
+> demo bundle's rows are:
+>
+> | Source | Fills | At |
+> |--------|-------|-----|
+> | AQICN | pm25, pm10, temp, humidity | its own station coordinates |
+> | OpenWeather | temp, humidity | the district centroid |
+> | TomTom | traffic_score | the district centroid |
+>
+> Three consequences, all visible on the Dashboard:
+>
+> 1. **No live row has both `pm25` and `traffic_score`**, so the model's
+>    strongest explanatory variable never co-occurs with its target.
+> 2. **AQICN's coordinates match no district**, so its PM2.5 lands on no
+>    polygon — 22 stations come back, 11 map to a district, 10 carry pm25, and
+>    they are not the same rows.
+> 3. **Training refuses**: `POST /ml/train` returns 422 until there are 124
+>    rows, and live history grows 32 rows per run from zero.
+>
+> Demo rows do not have this problem because the bundle is a single source
+> writing every column at the centroid. Until the live rows are merged onto one
+> grid, `ANALYTICS_SOURCE_SCOPE=demo` remains the setting for EDA Studio and
+> Model Lab. See `docs/multi-city.md` — the merge is a prerequisite there too.
 
 ### Did it work?
 

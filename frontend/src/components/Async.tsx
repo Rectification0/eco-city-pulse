@@ -7,7 +7,7 @@
  * "the request failed".
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from '../services/api'
 
 export type AsyncState<T> =
@@ -15,11 +15,31 @@ export type AsyncState<T> =
   | { status: 'ready'; data: T }
   | { status: 'error'; message: string; code: string }
 
-export function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
+export interface AsyncOptions {
+  /**
+   * Re-fetch every N milliseconds. Omitted, the request runs once on mount —
+   * which is right for anything that only changes when someone changes it.
+   */
+  refreshMs?: number
+}
+
+export function useAsync<T>(
+  load: () => Promise<T>,
+  deps: unknown[] = [],
+  { refreshMs }: AsyncOptions = {},
+) {
   const [state, setState] = useState<AsyncState<T>>({ status: 'loading' })
   const [nonce, setNonce] = useState(0)
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
 
   const retry = useCallback(() => setNonce((value) => value + 1), [])
+
+  // `load` is a new closure every render, so the poll must read it through a
+  // ref. In the effect's dependency list it would clear and restart the
+  // interval on each render, and a timer that resets faster than it fires
+  // never fires at all.
+  const loadRef = useRef(load)
+  loadRef.current = load
 
   useEffect(() => {
     let active = true
@@ -49,7 +69,39 @@ export function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce])
 
-  return { state, retry }
+  // The poll deliberately does *not* go back through `status: 'loading'`. That
+  // would blank the panel to a spinner on every tick, so the more often a
+  // dashboard refreshed the less of it you could read. A refresh either
+  // replaces the data or leaves what is on screen alone.
+  useEffect(() => {
+    if (!refreshMs) return
+
+    let active = true
+    const id = window.setInterval(() => {
+      loadRef
+        .current()
+        .then((data) => {
+          if (!active) return
+          setState({ status: 'ready', data })
+          setRefreshedAt(new Date())
+        })
+        .catch(() => {
+          // Swallowed on purpose: a failed *refresh* still has the last good
+          // reading behind it, and replacing a real number with an error
+          // because one poll timed out is the worse of the two lies. The
+          // initial load reports its failure normally, and `observed_at` in
+          // the payload is what tells a reader the data has stopped moving.
+        })
+    }, refreshMs)
+
+    return () => {
+      active = false
+      window.clearInterval(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshMs, ...deps, nonce])
+
+  return { state, retry, refreshedAt }
 }
 
 interface AsyncProps<T> {

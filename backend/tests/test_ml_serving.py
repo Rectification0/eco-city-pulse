@@ -207,11 +207,21 @@ def test_a_prediction_arrives_with_its_reasoning(
 ) -> None:
     """Task 8.3, end to end: the features come from the Phase 5 inference path
     and the attribution adds up to the forecast."""
-    from db.models import Observation
+    from db.models import DataSource, Observation
 
     loaded = serving.load_latest(db_session, "pm25_h1")
+    # Scoped to the fixture's own source. Unfiltered, this asked for the newest
+    # row *in the database*, which is the fixture's only while nothing else has
+    # written more recently -- a real ingest puts live readings on top, at
+    # coordinates carrying a single hour of history, and feature construction
+    # for a station with one reading fails on a fixture that had nothing to do
+    # with it.
     latest = (
-        db_session.query(Observation).order_by(Observation.timestamp.desc()).first()
+        db_session.query(Observation)
+        .join(DataSource, DataSource.id == Observation.source_id)
+        .filter(DataSource.name == "serving-test")
+        .order_by(Observation.timestamp.desc())
+        .first()
     )
     at = latest.timestamp - timedelta(hours=2)
 

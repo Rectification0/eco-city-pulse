@@ -17,11 +17,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.config import AnalyticsScope, Settings
+from api.dependencies import get_db_session
+from core.config import AnalyticsScope, Settings, get_settings
 from db.models import DataSource, Observation
+from main import create_app
 from services import datasets, ingestion_service
 from services.adapters import (
     DemoAdapter,
@@ -174,3 +177,90 @@ def test_ensure_sources_corrects_a_flag_that_drifted_from_the_registry(
     ingestion_service.ensure_sources(db_session)
 
     assert demo_source.is_synthetic is True
+
+
+# --- The dashboard endpoints ------------------------------------------------
+#
+# These two build their own query rather than going through
+# ``load_observations``, so nothing about the resolver reaches them
+# automatically. They shipped unscoped once; these tests are why that cannot
+# happen quietly a second time.
+
+
+def _scoped_client(
+    session: Session, settings: Settings, scope: AnalyticsScope
+) -> TestClient:
+    scoped = settings.model_copy(update={"analytics_source_scope": scope})
+    app = create_app(scoped)
+    app.dependency_overrides[get_settings] = lambda: scoped
+    app.dependency_overrides[get_db_session] = lambda: session
+    return TestClient(app)
+
+
+def _two_provenances_at_one_point(session: Session) -> tuple[float, float]:
+    """A demo reading and a newer live one at the same coordinate.
+
+    The same coordinate on purpose: OpenWeather and TomTom are fetched *at the
+    district centroid*, which is exactly where the demo bundle already sits, so
+    collision is the normal case rather than an edge one.
+    """
+    sources = ingestion_service.ensure_sources(session)
+    lat, lon = 28.61, 77.21
+    session.add_all(
+        [
+            Observation(
+                source_id=sources[DemoAdapter.spec.name].id,
+                timestamp=START,
+                lat=lat,
+                lon=lon,
+                pm25=10.0,
+            ),
+            Observation(
+                source_id=sources["AQICN"].id,
+                timestamp=START.replace(hour=6),
+                lat=lat,
+                lon=lon,
+                pm25=90.0,
+            ),
+        ]
+    )
+    session.flush()
+    return lat, lon
+
+
+@pytest.mark.db
+def test_the_latest_reading_comes_from_the_scoped_provenance(
+    db_session: Session, db_settings: Settings
+) -> None:
+    """DISTINCT ON resolves each coordinate to the newest row, so unscoped it
+    silently hands the map whichever provenance wrote last."""
+    lat, lon = _two_provenances_at_one_point(db_session)
+
+    with _scoped_client(db_session, db_settings, AnalyticsScope.DEMO) as client:
+        body = client.get(_url(db_settings, "/data/observations/latest")).json()
+
+    here = [r for r in body["readings"] if r["lat"] == lat and r["lon"] == lon]
+
+    assert [r["pm25"] for r in here] == [10.0], "the live row outranked the scope"
+
+
+@pytest.mark.db
+def test_a_station_trendline_never_splices_two_provenances(
+    db_session: Session, db_settings: Settings
+) -> None:
+    """The blend a chart cannot show. Two provenances at one coordinate plot as
+    one continuous line, and the step where the series changes what it reads is
+    indistinguishable from a change in the air."""
+    lat, lon = _two_provenances_at_one_point(db_session)
+
+    with _scoped_client(db_session, db_settings, AnalyticsScope.LIVE) as client:
+        body = client.get(
+            _url(db_settings, "/data/observations/series"),
+            params={"lat": lat, "lon": lon, "hours": 48},
+        ).json()
+
+    assert [p["pm25"] for p in body["points"]] == [90.0]
+
+
+def _url(settings: Settings, path: str) -> str:
+    return f"{settings.api_v1_prefix}{path}"

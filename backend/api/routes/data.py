@@ -664,12 +664,24 @@ async def latest_observations(
     One row per station, resolved with ``DISTINCT ON`` so the database does the
     per-group work rather than the application pulling every row and filtering
     in Python.
+
+    Scoped like every other read. Unscoped, ``DISTINCT ON (lat, lon)`` would
+    resolve each coordinate to whichever provenance last wrote there, and the
+    two do not overlap cleanly: OpenWeather and TomTom report at the district
+    centroid the demo bundle already occupies -- and carry no ``pm25`` -- so a
+    single live run would blank the map's pollution values, while AQICN reports
+    at its own station coordinates and would add points belonging to no
+    district at all.
     """
+    source_ids = datasets.resolve_source_ids(session, None, settings=settings)
+
     statement = (
         select(Observation)
         .distinct(Observation.lat, Observation.lon)
         .order_by(Observation.lat, Observation.lon, Observation.timestamp.desc())
     )
+    if source_ids is not None:
+        statement = statement.where(Observation.source_id.in_(list(source_ids)))
     rows = list(session.scalars(statement))
 
     districts = {
@@ -724,19 +736,29 @@ async def latest_observations(
 )
 async def station_series(
     session: SessionDep,
+    settings: SettingsDep,
     lat: Annotated[float, Query(ge=-90, le=90)],
     lon: Annotated[float, Query(ge=-180, le=180)],
     hours: Annotated[int, Query(ge=1, le=720)] = 48,
 ) -> StationSeriesResponse:
-    """The observed history behind the dashboard's trendline (task 10.5)."""
-    rows = list(
-        session.scalars(
-            select(Observation)
-            .where(Observation.lat == lat, Observation.lon == lon)
-            .order_by(Observation.timestamp.desc())
-            .limit(hours)
-        )
+    """The observed history behind the dashboard's trendline (task 10.5).
+
+    Scoped, because a trendline is the one place a blend is invisible: two
+    provenances at one coordinate plot as a single continuous line, and the
+    step where the series changes what it is reading looks exactly like a
+    change in the air.
+    """
+    source_ids = datasets.resolve_source_ids(session, None, settings=settings)
+
+    statement = (
+        select(Observation)
+        .where(Observation.lat == lat, Observation.lon == lon)
+        .order_by(Observation.timestamp.desc())
+        .limit(hours)
     )
+    if source_ids is not None:
+        statement = statement.where(Observation.source_id.in_(list(source_ids)))
+    rows = list(session.scalars(statement))
 
     return StationSeriesResponse(
         station=datasets.station_key(lat, lon),
