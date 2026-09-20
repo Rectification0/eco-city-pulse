@@ -158,6 +158,27 @@ inferences to redraw the same three points is work nobody asked for.
 > 11 rows an hour from zero — so `ANALYTICS_SOURCE_SCOPE=demo` remains the
 > setting for Model Lab until the measured series is deep enough.
 
+### Keeping the disk in check
+
+Nothing grows fast except the model registry's artifacts — a random forest
+pickles to about 22 MB and the ladder trains one per horizon, so each training
+run writes ~46 MB.
+
+```bash
+python -m scripts.prune --dry-run --verbose   # report only
+python -m scripts.prune                       # do it
+```
+
+The artifact sweep also runs automatically after each registration, so in
+normal use there is nothing to remember. The script is for the age-based
+sweeps — ingestion runs past 90 days, forecasts that were never scored past 30.
+
+It never deletes an observation and never deletes a `models` row: the
+measurements are the training data (AC-4, AC-5) and the rows are what
+`predictions` hangs off with `ON DELETE CASCADE`. Observations cost under
+100 MB a year, so there is nothing to reclaim there anyway.
+See `docs/retention.md`.
+
 ### Did it work?
 
 Open **Admin**, or:

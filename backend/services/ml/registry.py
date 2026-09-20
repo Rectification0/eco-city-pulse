@@ -156,6 +156,16 @@ def register(
     session.add(row)
     session.flush()
 
+    # Registration is the only moment an artifact can become superseded, so it
+    # is where the sweep belongs -- a retention job that has to be remembered
+    # is a retention job that runs once. Imported here rather than at module
+    # level because `retention` reads the registry's own tables and a top-level
+    # import would close the cycle.
+    if settings.prune_artifacts_on_register:
+        from services import retention
+
+        retention.sweep_artifacts(session, settings)
+
     return RegisteredModel(
         model_id=row.id,
         name=row.name,

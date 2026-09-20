@@ -107,6 +107,32 @@ class Settings(BaseSettings):
     # 150k rows of hourly observations.
     upload_max_bytes: int = 10_000_000
 
+    # --- Retention ---
+    # `observations` is deliberately absent. It is the training data, the
+    # source foreign key is RESTRICT precisely so history outlives a source's
+    # removal, and the quality engine's rule is flag-never-delete (AC-4, AC-5).
+    # Measured, it also does not need a policy: ~950 bytes a row including
+    # indexes, 264 rows a day for eleven stations -- under 100 MB a year. What
+    # actually grows is the artifact directory, at ~46 MB per training run.
+    #
+    # Retention never deletes a `models` row, only the file it points at. The
+    # row carries the metrics, the feature list and the date -- the scientific
+    # record -- and `predictions.model_id` is ON DELETE CASCADE, so removing
+    # rows would silently take the drift dataset (design §6.1) with them.
+    #
+    # Newest N artifacts kept per (target, model name). At least 1, because the
+    # newest per target is the production model `serving.load_latest` resolves.
+    artifact_keep_per_model: int = 3
+    # Run the artifact sweep automatically after each registration, which is
+    # the only moment a new artifact can supersede an old one.
+    prune_artifacts_on_register: bool = True
+    # Ingestion runs and the quarantined payloads hanging off them.
+    run_log_retention_days: int = 90
+    # Forecasts whose hour has long passed without an observation to score
+    # them: they will never be scored now. Scored rows are kept indefinitely --
+    # they are the drift dataset, and they are what the whole table is for.
+    unscored_prediction_retention_days: int = 30
+
     # --- Analytics ---
     # Which sources EDA, features, training and serving read when a request
     # does not name any. An explicit `source_ids` always wins over this.

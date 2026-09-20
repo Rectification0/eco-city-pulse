@@ -28,6 +28,7 @@ python -m scripts.seed_demo         # offline demo dataset
 python -m scripts.run_quality       # impute + flag anomalies
 python -m scripts.build_features    # engineered feature store
 python -m scripts.train_models      # train + register the model ladder
+python -m scripts.prune             # retention sweep; --dry-run first
 ```
 
 Run the app with `docker compose up --build` (three containers; DB publishes on
