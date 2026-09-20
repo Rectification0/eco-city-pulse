@@ -40,6 +40,7 @@ from db.models import (
     DataSource,
     IngestionRun,
     Observation,
+    Provenance,
     QuarantinedRecord,
     RunStatus,
     SourceStatus,
@@ -150,12 +151,35 @@ def _json_safe(value: Any) -> Any:
 
 
 def write_observations(
-    session: Session, readings: Sequence[SourceReading], *, source_id: int
+    session: Session,
+    readings: Sequence[SourceReading],
+    *,
+    source_id: int,
+    provenance: Provenance = Provenance.MEASURED,
+    authoritative_for: frozenset[str] = frozenset(),
 ) -> int:
     """Upsert harmonized readings. The only place ``observations`` is written.
 
-    On conflict the measurement columns are set to ``COALESCE(new, existing)``:
-    a fresh value wins, but a NULL leaves what is already stored alone.
+    The conflict target is ``(provenance, timestamp, lat, lon)``, so the three
+    live feeds describing one station-hour land on **one row** and fill in each
+    other's gaps. That is the whole merge: no second pass, no merged table, no
+    reconciliation step. It works because every adapter now keys its reading on
+    the station it was asked about rather than the coordinate its provider
+    chose to answer with.
+
+    Per field, two rules decide who wins:
+
+    * the source that is **authoritative** for it writes ``COALESCE(new,
+      existing)`` -- its value replaces whatever is there;
+    * every other source writes ``COALESCE(existing, new)`` -- it may fill a
+      NULL but never overwrite.
+
+    Which makes the result independent of ingestion order. ``temp`` arrives
+    from both AQICN and OpenWeather and they disagree (33.8 against 32.9 on the
+    same hour in the first live run); whichever runs first, the weather
+    source's value is what survives, because an air-quality station's
+    thermometer is incidental to what it is there to measure.
+
     ``is_anomaly`` is deliberately untouched — it belongs to the Phase 3
     quality engine, and re-ingestion must not silently unflag a record.
     """
@@ -169,6 +193,7 @@ def write_observations(
         batch = [
             {
                 "source_id": source_id,
+                "provenance": provenance,
                 "timestamp": reading.timestamp,
                 "lat": reading.lat,
                 "lon": reading.lon,
@@ -179,14 +204,21 @@ def write_observations(
 
         if dialect == "postgresql":
             insert = pg_insert(Observation)
+            columns = Observation.__table__.c
+            merged = {
+                name: (
+                    func.coalesce(insert.excluded[name], columns[name])
+                    if name in authoritative_for
+                    else func.coalesce(columns[name], insert.excluded[name])
+                )
+                for name in MEASUREMENT_FIELDS
+            }
+            # The last writer is recorded even when it changed nothing, so
+            # "when did this row last hear from a feed" stays answerable.
+            merged["source_id"] = insert.excluded["source_id"]
             statement = insert.on_conflict_do_update(
-                constraint="uq_observations_source_timestamp_location",
-                set_={
-                    name: func.coalesce(
-                        insert.excluded[name], Observation.__table__.c[name]
-                    )
-                    for name in MEASUREMENT_FIELDS
-                },
+                constraint="uq_observations_provenance_timestamp_location",
+                set_=merged,
             )
         else:  # pragma: no cover - PostgreSQL is the supported target
             statement = Observation.__table__.insert()
@@ -266,7 +298,15 @@ def ingest_source(
 
     # --- harmonize + write ---------------------------------------------------
     harmonized = harmonizer.harmonize(readings)
-    outcome.records_written = write_observations(session, harmonized, source_id=source.id)
+    outcome.records_written = write_observations(
+        session,
+        harmonized,
+        source_id=source.id,
+        provenance=(
+            Provenance.SYNTHETIC if adapter.spec.synthetic else Provenance.MEASURED
+        ),
+        authoritative_for=adapter.spec.authoritative_for,
+    )
 
     # --- health --------------------------------------------------------------
     source.last_run = started

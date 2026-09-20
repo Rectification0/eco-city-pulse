@@ -143,30 +143,20 @@ polls the two observed panels (map, trendline) every five minutes. It does not
 poll the forecast panels, which are derived from that data — re-running three
 inferences to redraw the same three points is work nobody asked for.
 
-> **What live mode does not give you yet.** Each source writes its *own* row.
-> Nothing merges them, so no live row is the joined environmental state the
-> demo bundle's rows are:
+> **How complete a live row is.** The three feeds are merged into one row per
+> station-hour — AQICN supplies PM2.5 and PM10, OpenWeather temperature and
+> humidity, TomTom traffic — so a live row is the joined state, not a third of
+> it. See `docs/observation-merge.md`.
 >
-> | Source | Fills | At |
-> |--------|-------|-----|
-> | AQICN | pm25, pm10, temp, humidity | its own station coordinates |
-> | OpenWeather | temp, humidity | the district centroid |
-> | TomTom | traffic_score | the district centroid |
+> They do not agree on what hour it is, and they are each right: AQICN reports
+> when its monitor last published, usually an hour before the request.
+> So the newest row for a station has weather and traffic but no PM2.5 until
+> the next poll fills it. `/data/observations/latest` therefore returns the
+> newest row *that carries PM2.5*, and `stale_minutes` says how old it is.
 >
-> Three consequences, all visible on the Dashboard:
->
-> 1. **No live row has both `pm25` and `traffic_score`**, so the model's
->    strongest explanatory variable never co-occurs with its target.
-> 2. **AQICN's coordinates match no district**, so its PM2.5 lands on no
->    polygon — 22 stations come back, 11 map to a district, 10 carry pm25, and
->    they are not the same rows.
-> 3. **Training refuses**: `POST /ml/train` returns 422 until there are 124
->    rows, and live history grows 32 rows per run from zero.
->
-> Demo rows do not have this problem because the bundle is a single source
-> writing every column at the centroid. Until the live rows are merged onto one
-> grid, `ANALYTICS_SOURCE_SCOPE=demo` remains the setting for EDA Studio and
-> Model Lab. See `docs/multi-city.md` — the merge is a prerequisite there too.
+> `POST /ml/train` still refuses under 124 rows, and live history grows about
+> 11 rows an hour from zero — so `ANALYTICS_SOURCE_SCOPE=demo` remains the
+> setting for Model Lab until the measured series is deep enough.
 
 ### Did it work?
 

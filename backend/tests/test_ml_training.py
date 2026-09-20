@@ -320,11 +320,12 @@ def test_a_window_too_short_to_train_is_refused(observations: pd.DataFrame) -> N
 
 
 @pytest.fixture
-def seeded(db_session: Session) -> int:
+def seeded(db_session: Session, claim_stations) -> int:
     from db.models import DataSource, Observation, SourceStatus
 
     settings = Settings(_env_file=None, postgres_password="test-only")
     stations = geo_service.stations_from_districts(settings)[:1]
+    claim_stations(stations)
     source = DataSource(name="ml-train-test", status=SourceStatus.OFFLINE)
     db_session.add(source)
     db_session.flush()

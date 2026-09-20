@@ -30,6 +30,11 @@ from services.harmonizer import SourceReading, harmonize_coordinates, to_utc
 BASE_URL = "https://api.waqi.info"
 REQUEST_TIMEOUT = 10.0
 
+# The station we asked about, carried through the payload so ``parse`` can use
+# it as the reading's location. See the class docstring for why that is not the
+# coordinate AQICN answers with.
+REQUESTED_POINT_KEY = "_requested_point"
+
 
 class AqicnValue(BaseModel):
     """One ``iaqi`` entry. Missing pollutants are simply absent from the dict."""
@@ -81,6 +86,7 @@ class AqicnResponse(BaseModel):
     # AQICN returns a *string* here when status != "ok" (e.g. "Unknown station"),
     # so this cannot be typed as AqicnData unconditionally.
     data: AqicnData | str
+    requested_point: tuple[float, float] = Field(alias=REQUESTED_POINT_KEY)
 
 
 class AqicnAdapter(SourceAdapter):
@@ -88,6 +94,7 @@ class AqicnAdapter(SourceAdapter):
         name="AQICN",
         domain=SourceDomain.AIR_QUALITY,
         api_url=f"{BASE_URL}/feed/",
+        authoritative_for=frozenset({"pm25", "pm10"}),
         description="World Air Quality Index — PM2.5, PM10, temperature, humidity.",
     )
 
@@ -114,7 +121,9 @@ class AqicnAdapter(SourceAdapter):
                         f"AQICN request failed for {station.district_id}.",
                         details={"station": station.district_id, "error": str(exc)},
                     ) from exc
-                yield response.json()
+                payload = dict(response.json())
+                payload[REQUESTED_POINT_KEY] = [station.lat, station.lon]
+                yield payload
 
     def parse(self, payload: Mapping[str, Any]) -> list[SourceReading]:
         parsed = AqicnResponse.model_validate(payload)
@@ -127,7 +136,18 @@ class AqicnAdapter(SourceAdapter):
             )
 
         data = parsed.data
-        lat, lon = harmonize_coordinates(data.city.geo[0], data.city.geo[1])
+        # The station we asked about, not the one that answered. AQICN resolves
+        # a coordinate to its *nearest* monitor, which sits tens to thousands of
+        # metres away and matches no district centroid -- so a reading keyed on
+        # it merges with nothing, belongs to no polygon on the map, and makes
+        # two districts that resolve to one station look like one district.
+        #
+        # The monitor's own position is real information and is deliberately
+        # dropped here rather than half-recorded: it is a property of a station
+        # entity this schema does not have yet (see docs/multi-city.md). What
+        # the row asserts is "this is the reading for this district", which is
+        # what the rest of the platform joins on.
+        lat, lon = harmonize_coordinates(*parsed.requested_point)
 
         stamp = data.time.iso or data.time.s
         if stamp is None:

@@ -50,6 +50,17 @@ class AdapterSpec:
     # the analytics scope can keep the two provenances apart without holding a
     # list of source names (see ``datasets.resolve_source_ids``).
     synthetic: bool = False
+    # The measurement columns this source is the authority on. Once several
+    # sources merge into one row, `temp` and `humidity` arrive from two of them
+    # at once and something has to decide. Without this the decision was made
+    # by tuple order in LIVE_ADAPTER_TYPES, which is deterministic but
+    # accidental -- and it made the merged value depend on ingestion order.
+    #
+    # An authoritative writer overwrites the field; a non-authoritative one may
+    # only fill it when it is still NULL. That pair of rules is what makes the
+    # merge order-independent: whichever of the two runs first, the authority's
+    # value is what survives.
+    authoritative_for: frozenset[str] = frozenset()
     description: str = ""
 
 

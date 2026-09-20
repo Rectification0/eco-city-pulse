@@ -213,12 +213,15 @@ def test_an_artifact_without_calibration_falls_back_and_says_so() -> None:
 
 
 @pytest.fixture
-def trained(db_session: Session, db_settings: Settings, tmp_path) -> tuple[Settings, float, float]:
+def trained(
+    db_session: Session, db_settings: Settings, tmp_path, claim_stations
+) -> tuple[Settings, float, float]:
     """One station, trained and registered, rolled back afterwards."""
     from db.models import DataSource, Observation, SourceStatus
 
     settings = db_settings.model_copy(update={"model_artifact_dir": str(tmp_path)})
     station = geo_service.stations_from_districts(settings)[0]
+    claim_stations([station])
 
     source = DataSource(name="predict-test", status=SourceStatus.OFFLINE)
     db_session.add(source)
@@ -366,9 +369,19 @@ def test_the_outcome_is_backfilled_once_the_hour_is_observed(
     from db.models import Observation, Prediction
 
     settings, lat, lon = trained
+    # Both coordinates. Four Delhi districts share each latitude -- 28.66 is
+    # central, east, new and west -- so filtering on `lat` alone could return a
+    # neighbour's reading, and the assertion below then compares this station's
+    # backfilled outcome against a different district's PM2.5. It only ever
+    # passed because the fixture's rows happened to be the newest at that
+    # latitude; a live ingest at any sibling district breaks the tie.
     observed = (
         db_session.query(Observation)
-        .filter(Observation.lat == lat, Observation.pm25.is_not(None))
+        .filter(
+            Observation.lat == lat,
+            Observation.lon == lon,
+            Observation.pm25.is_not(None),
+        )
         .order_by(Observation.timestamp.desc())
         .first()
     )

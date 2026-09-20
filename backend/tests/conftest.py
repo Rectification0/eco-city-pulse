@@ -188,6 +188,34 @@ def db_settings(live_settings: Settings) -> Settings:
 
 
 @pytest.fixture
+def claim_stations(db_session: Session):
+    """Give a fixture sole ownership of the station-hours it is about to write.
+
+    ``observations`` is now unique on ``(provenance, timestamp, lat, lon)``,
+    which is what lets three feeds merge into one row. The same key means two
+    datasets covering the same stations and hours can no longer coexist by
+    sitting under different ``source_id``s -- which is precisely what these
+    fixtures used to rely on. Seeding 45 days of history at a real district
+    centroid now collides with whatever the developer's database already holds
+    there.
+
+    Deleting first states the intent the fixtures always had: this test owns
+    this station. Scoped to the coordinates, so it stays cheap, and discarded
+    with the surrounding transaction like every other write here.
+    """
+    from db.models import Observation
+
+    def claim(stations) -> None:
+        for station in stations:
+            db_session.query(Observation).filter(
+                Observation.lat == station.lat, Observation.lon == station.lon
+            ).delete(synchronize_session=False)
+        db_session.flush()
+
+    return claim
+
+
+@pytest.fixture
 def db_client(db_session: Session, db_settings: Settings) -> Iterator[TestClient]:
     """A TestClient whose routes share the rolled-back session."""
     app = create_app(db_settings)

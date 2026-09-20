@@ -22,7 +22,12 @@ from core.config import Settings
 from services import demo_data
 from services.adapters.base import AdapterSpec, SourceAdapter, SourceDomain
 from services.geo_service import Station
-from services.harmonizer import SourceReading, harmonize_coordinates, to_utc
+from services.harmonizer import (
+    MEASUREMENT_FIELDS,
+    SourceReading,
+    harmonize_coordinates,
+    to_utc,
+)
 
 
 class DemoPayload(BaseModel):
@@ -58,6 +63,7 @@ class DemoAdapter(SourceAdapter):
         api_url=None,
         requires_credentials=False,
         synthetic=True,
+        authoritative_for=frozenset(MEASUREMENT_FIELDS),
         description="Offline synthetic history: air quality, weather, traffic.",
     )
 

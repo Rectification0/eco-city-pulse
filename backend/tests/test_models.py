@@ -68,8 +68,14 @@ LOG_TABLES = {"ingestion_runs", "quarantined_records"}
 # traffic fallback were allowed to sit in the same table as AQICN. Without the
 # flag, a request that named no sources pooled generated values with measured
 # ones and reported the result as observation -- the claim ETH-1 forbids.
+#
+# ``observations.provenance``: specs §9 keys the table on the source, which
+# made a row one feed's view of a station-hour rather than the joined state the
+# table claims to hold. Merging the feeds needs a key they can collide on, and
+# one the demo bundle cannot collide *into* -- see migration 0005.
 SPEC_EXTENSIONS: dict[str, set[str]] = {
     "data_sources": {"is_synthetic"},
+    "observations": {"provenance"},
     "predictions": {"lat", "lon"},
 }
 
@@ -116,14 +122,26 @@ def test_observations_carry_the_composite_index() -> None:
     assert indexes["ix_observations_timestamp_lat_lon"] == ["timestamp", "lat", "lon"]
 
 
-def test_observations_are_unique_per_source_time_and_place() -> None:
-    """The conflict target that makes re-ingestion idempotent (Phase 2)."""
+def test_observations_are_unique_per_provenance_time_and_place() -> None:
+    """The conflict target that makes re-ingestion idempotent *and* makes three
+    feeds merge into one row.
+
+    ``source_id`` used to sit here, which meant AQICN, OpenWeather and TomTom
+    could never collide and so never merged: each kept its own third of the
+    station-hour, and no live row ever held both PM2.5 and traffic. Provenance
+    replaces it because the demo bundle occupies the same centroids and hours
+    and must *not* merge into them (ETH-1)."""
     unique = [
         c for c in Observation.__table__.constraints if isinstance(c, UniqueConstraint)
     ]
 
     assert len(unique) == 1
-    assert [c.name for c in unique[0].columns] == ["source_id", "timestamp", "lat", "lon"]
+    assert [c.name for c in unique[0].columns] == [
+        "provenance",
+        "timestamp",
+        "lat",
+        "lon",
+    ]
 
 
 def test_deleting_a_source_cannot_destroy_its_history() -> None:

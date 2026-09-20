@@ -68,6 +68,7 @@ class TomTomAdapter(SourceAdapter):
         name="TomTom Traffic",
         domain=SourceDomain.TRAFFIC,
         api_url=f"{BASE_URL}{FLOW_PATH}",
+        authoritative_for=frozenset({"traffic_score"}),
         description="Road flow converted to a 0–100 congestion index.",
     )
 

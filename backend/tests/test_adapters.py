@@ -116,6 +116,11 @@ def _aqicn_payload(**overrides: object) -> dict:
             },
             "time": {"iso": "2026-01-01T17:30:00+05:30"},
         },
+        # The station the fetch asked about, injected by the adapter. Note it
+        # differs from `city.geo`: AQICN answers from its nearest monitor, and
+        # the reading is keyed on what we asked for so three feeds describing
+        # one district land on one row.
+        "_requested_point": [28.60, 77.20],
     }
     payload.update(overrides)  # type: ignore[arg-type]
     return payload
@@ -158,7 +163,16 @@ def test_aqicn_non_ok_status_is_rejected() -> None:
     """On failure AQICN returns a *string* in ``data``; the schema must not
     assume an object is always there."""
     with pytest.raises(SchemaValidationError, match="non-ok"):
-        AqicnAdapter().parse({"status": "error", "data": "Unknown station"})
+        # `_requested_point` is present even here: `fetch` injects it onto the
+        # raw payload before yielding, so an error response carries it too, and
+        # `parse` is only ever handed what `fetch` produced.
+        AqicnAdapter().parse(
+            {
+                "status": "error",
+                "data": "Unknown station",
+                "_requested_point": [28.60, 77.20],
+            }
+        )
 
 
 def test_aqicn_payload_without_a_timestamp_is_rejected() -> None:
@@ -189,7 +203,10 @@ def test_aqicn_garbage_payload_is_rejected() -> None:
 
 def _openweather_payload(**main: object) -> dict:
     return {
+        # `coord` is what OpenWeather answered with; `_requested_point` is what
+        # we asked for, and the reading is keyed on the second.
         "coord": {"lat": 28.61, "lon": 77.21},
+        "_requested_point": [28.60, 77.20],
         "main": {"temp": 22.5, "humidity": 40, **main},
         "dt": 1767268800,
     }

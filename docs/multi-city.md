@@ -86,7 +86,14 @@ transformers are stored per model artifact, so they inherit the same problem.
 
 ## 2. The prerequisite: live rows are not joined rows
 
-This blocks multi-city, and it already blocks single-city live mode. It should
+> **Update, 2026-09-20: the merge described here is now built** — migration
+> `0005`, written up in [`observation-merge.md`](./observation-merge.md). What
+> follows is the analysis that led to it, kept because the *station entity* it
+> argues for is still the open piece and is still what multi-city needs. The
+> merge was done with a provenance key instead, which was the smaller change;
+> the station table remains the right home for a monitor's true position.
+
+This blocks multi-city, and it already blocked single-city live mode. It should
 be fixed first whichever option is chosen, because every option multiplies it.
 
 `Observation` describes itself as "one harmonized hourly reading at one

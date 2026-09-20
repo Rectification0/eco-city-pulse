@@ -86,6 +86,10 @@ def test_an_observation_is_a_measurement_and_a_place_and_nothing_else() -> None:
     assert columns == {
         "id",
         "source_id",
+        # Whether the row was measured or generated. Still nothing about a
+        # person: it describes the *reading's* origin, which is what lets a
+        # statistic say whether it rests on measurement at all (ETH-1).
+        "provenance",
         "timestamp",
         "lat",
         "lon",

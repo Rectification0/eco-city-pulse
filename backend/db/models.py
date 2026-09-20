@@ -50,6 +50,28 @@ class SourceStatus(str, Enum):
     OFFLINE = "offline"
 
 
+class Provenance(str, Enum):
+    """Whether a row's values were measured or generated.
+
+    This is the *merge key*, not merely a label. Three live feeds describing
+    the same station-hour should collapse into one row -- that is what makes a
+    row "the joined environmental state at a point in space and time" rather
+    than a third of it. The demo bundle describes the same station-hours at the
+    same centroids and must never collapse into them, because a statistic built
+    from both is a claim about measurement that measurement does not support
+    (ETH-1).
+
+    Two values, mirroring ``DataSource.is_synthetic``, so the scope a request
+    resolves and the key a row merges on cannot disagree. An analyst upload
+    counts as measured: it is real data, and treating it as a third class would
+    put two rows on one station-hour inside a single scope, which is the
+    duplicate this column exists to remove.
+    """
+
+    MEASURED = "measured"
+    SYNTHETIC = "synthetic"
+
+
 class DataSource(Base):
     """A provider of observations: a live API, an upload, or the demo bundle."""
 
@@ -108,6 +130,23 @@ class Observation(Base):
     __tablename__ = "observations"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    # Denormalised from ``data_sources.is_synthetic`` because a unique
+    # constraint cannot reach into another table. ``ensure_sources`` keeps the
+    # flag itself honest; the write path copies it onto each row.
+    provenance: Mapped[Provenance] = mapped_column(
+        SAEnum(
+            Provenance,
+            name="observation_provenance",
+            native_enum=False,  # VARCHAR + CHECK, as with source_status
+            values_callable=lambda enum: [member.value for member in enum],
+        ),
+        nullable=False,
+        default=Provenance.MEASURED,
+        server_default=Provenance.MEASURED.value,
+    )
+    # Which source wrote last. Attribution, not identity: a merged row is built
+    # by several feeds, and the per-source counts in /data/sources read the
+    # ingestion log rather than this column.
     source_id: Mapped[int] = mapped_column(
         # RESTRICT, not CASCADE: deleting a source must never silently destroy
         # the history that models were trained on.
@@ -147,12 +186,18 @@ class Observation(Base):
         # extremes here would delete exactly the records the spec protects.
         # Re-ingesting the same window must not duplicate rows: this is the
         # conflict target the Phase 2 upsert writes against.
+        # Provenance, not source. With ``source_id`` here, AQICN, OpenWeather
+        # and TomTom could never collide, so the COALESCE upsert below -- which
+        # was written to merge partial rows -- had nothing to merge and each
+        # feed kept its own third of the row. Keying on provenance lets the
+        # three converge while the demo bundle, at the same centroids and the
+        # same hours, stays where it is.
         UniqueConstraint(
-            "source_id",
+            "provenance",
             "timestamp",
             "lat",
             "lon",
-            name="uq_observations_source_timestamp_location",
+            name="uq_observations_provenance_timestamp_location",
         ),
         # design §6.1: one composite index serving both time-series windows and
         # map queries (task 1.6).
@@ -403,6 +448,7 @@ __all__ = [
     "MLModel",
     "Observation",
     "Prediction",
+    "Provenance",
     "QuarantinedRecord",
     "RunStatus",
     "SourceStatus",

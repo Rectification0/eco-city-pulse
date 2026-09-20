@@ -675,10 +675,30 @@ async def latest_observations(
     """
     source_ids = datasets.resolve_source_ids(session, None, settings=settings)
 
+    # Newest row *that carries PM2.5*, not simply the newest row.
+    #
+    # The feeds do not agree on what hour it is, and they are each right.
+    # OpenWeather and TomTom report conditions at the moment of the request;
+    # AQICN reports when its monitor last published, which is typically an hour
+    # earlier. So the newest row for a station reliably has temperature and
+    # traffic and no PM2.5 -- not while ingestion catches up, but permanently,
+    # because the next poll writes a newer weather row at the same time as it
+    # fills the previous hour's pollution.
+    #
+    # Picking the newest row with a reading keeps this to one row with one
+    # honest timestamp: the alternative -- taking each column from whichever
+    # row last had it -- would manufacture a reading that no hour ever
+    # produced, on the view whose entire job is PM2.5 by district.
+    # `stale_minutes` is what tells the reader how far back that is.
     statement = (
         select(Observation)
         .distinct(Observation.lat, Observation.lon)
-        .order_by(Observation.lat, Observation.lon, Observation.timestamp.desc())
+        .order_by(
+            Observation.lat,
+            Observation.lon,
+            Observation.pm25.is_(None),  # False sorts first: rows with a value
+            Observation.timestamp.desc(),
+        )
     )
     if source_ids is not None:
         statement = statement.where(Observation.source_id.in_(list(source_ids)))

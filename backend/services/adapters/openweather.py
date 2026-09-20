@@ -23,6 +23,10 @@ from services.geo_service import Station
 from services.harmonizer import SourceReading, harmonize_coordinates, to_utc
 
 BASE_URL = "https://api.openweathermap.org"
+
+# As in the AQICN and TomTom adapters: the station asked about, carried through
+# the payload so every source keys its rows the same way.
+REQUESTED_POINT_KEY = "_requested_point"
 REQUEST_TIMEOUT = 10.0
 
 # Recorded extremes on Earth are roughly -90 °C to +57 °C. A value outside this
@@ -50,6 +54,7 @@ class OpenWeatherResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     coord: OpenWeatherCoord
+    requested_point: tuple[float, float] = Field(alias=REQUESTED_POINT_KEY)
     main: OpenWeatherMain = Field(default_factory=OpenWeatherMain)
     dt: int  # epoch seconds, UTC by OpenWeather's contract
     name: str | None = None
@@ -60,6 +65,7 @@ class OpenWeatherAdapter(SourceAdapter):
         name="OpenWeather",
         domain=SourceDomain.WEATHER,
         api_url=f"{BASE_URL}/data/2.5/weather",
+        authoritative_for=frozenset({"temp", "humidity"}),
         description="Current conditions — temperature (°C) and relative humidity.",
     )
 
@@ -88,7 +94,9 @@ class OpenWeatherAdapter(SourceAdapter):
                         f"OpenWeather request failed for {station.district_id}.",
                         details={"station": station.district_id, "error": str(exc)},
                     ) from exc
-                yield response.json()
+                payload = dict(response.json())
+                payload[REQUESTED_POINT_KEY] = [station.lat, station.lon]
+                yield payload
 
     def parse(self, payload: Mapping[str, Any]) -> list[SourceReading]:
         parsed = OpenWeatherResponse.model_validate(payload)
@@ -103,7 +111,13 @@ class OpenWeatherAdapter(SourceAdapter):
                     details={"temp": temperature, "bounds": list(TEMPERATURE_BOUNDS)},
                 )
 
-        lat, lon = harmonize_coordinates(parsed.coord.lat, parsed.coord.lon)
+        # The requested point, not `coord`. OpenWeather usually echoes the
+        # queried coordinate back, which is why this was aligned by accident
+        # rather than by design -- but it is free to answer from its own grid
+        # cell, and a reading that lands a few hundred metres off merges with
+        # nothing. Keying every source on the station asked about is what makes
+        # three feeds collapse into one row.
+        lat, lon = harmonize_coordinates(*parsed.requested_point)
 
         return [
             SourceReading(

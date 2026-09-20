@@ -8,6 +8,7 @@ without leaving anything behind.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,7 @@ from db.models import (
     DataSource,
     IngestionRun,
     Observation,
+    Provenance,
     QuarantinedRecord,
     RunStatus,
     SourceStatus,
@@ -29,7 +31,7 @@ from db.models import (
 from services import ingestion_service
 from services.adapters.base import AdapterSpec, SourceAdapter, SourceDomain
 from services.geo_service import Station
-from services.harmonizer import SourceReading
+from services.harmonizer import MEASUREMENT_FIELDS, SourceReading
 
 pytestmark = pytest.mark.db
 
@@ -49,6 +51,11 @@ class StubAdapter(SourceAdapter):
         domain=SourceDomain.BUNDLE,
         api_url=None,
         requires_credentials=False,
+        # Declares every field, because it stands in for a *source* rather than
+        # for the traffic fallback. A source that claims nothing may only fill
+        # NULLs, so without this the stub could not update its own values on a
+        # re-ingest -- which is the property the tests below exist to check.
+        authoritative_for=frozenset(MEASUREMENT_FIELDS),
     )
 
     def __init__(
@@ -70,13 +77,15 @@ class StubAdapter(SourceAdapter):
     def parse(self, payload: Mapping[str, Any]) -> list[SourceReading]:
         if payload.get("broken"):
             raise ValueError("payload is broken")
+        # Every measurement field, not just the two the earliest tests needed:
+        # a stub that silently drops `traffic_score` makes a merge test pass or
+        # fail for reasons that have nothing to do with the merge.
         return [
             SourceReading(
                 timestamp=payload["timestamp"],
                 lat=payload.get("lat", STATION.lat),
                 lon=payload.get("lon", STATION.lon),
-                pm25=payload.get("pm25"),
-                temp=payload.get("temp"),
+                **{field: payload.get(field) for field in MEASUREMENT_FIELDS},
             )
         ]
 
@@ -655,3 +664,146 @@ def test_every_run_is_logged_with_its_counts(
     assert run.status is RunStatus.PARTIAL
     assert (run.records_fetched, run.records_valid, run.records_quarantined) == (2, 1, 1)
     assert run.finished_at is not None and run.finished_at >= run.started_at
+
+
+# --- The merge (migration 0005) ---------------------------------------------
+#
+# Three feeds describe the same station-hour and each fills a different part of
+# it. That they converge on one row is the whole reason `provenance` replaced
+# `source_id` in the unique key; these tests are what stop it silently coming
+# apart again.
+
+
+def _feed(name: str, owns: frozenset[str]) -> type[StubAdapter]:
+    """A stub standing in for one real source, claiming the fields it owns."""
+
+    class Feed(StubAdapter):
+        spec = AdapterSpec(
+            name=name,
+            domain=SourceDomain.BUNDLE,
+            api_url=None,
+            requires_credentials=False,
+            authoritative_for=owns,
+        )
+
+    return Feed
+
+
+AIR = _feed("Air Feed", frozenset({"pm25"}))
+WEATHER = _feed("Weather Feed", frozenset({"temp"}))
+TRAFFIC = _feed("Traffic Feed", frozenset({"traffic_score"}))
+
+
+@pytest.fixture
+def three_feeds(db_session: Session) -> None:
+    for adapter in (AIR, WEATHER, TRAFFIC):
+        db_session.add(
+            DataSource(name=adapter.spec.name, status=SourceStatus.OFFLINE)
+        )
+    db_session.flush()
+
+
+def _run(session: Session, settings: Settings, adapter_type, **values: Any) -> None:
+    ingestion_service.ingest_source(
+        session,
+        settings,
+        adapter_type([_payload(**values)]),
+        mode=IngestionMode.MANUAL,
+        stations=[STATION],
+    )
+
+
+def _row_at(session: Session, hour: int = 12) -> Observation:
+    return session.scalar(
+        select(Observation).where(
+            Observation.timestamp == datetime(2026, 1, 1, hour, tzinfo=timezone.utc),
+            Observation.lat == STATION.lat,
+            Observation.lon == STATION.lon,
+        )
+    )
+
+
+@pytest.mark.db
+def test_three_feeds_describing_one_hour_become_one_row(
+    db_session: Session, db_settings: Settings, three_feeds: None
+) -> None:
+    """The row `observations` always claimed to hold.
+
+    Before the key changed, this produced three rows of one column each, so no
+    row carried both the target and its strongest predictor and the map's
+    DISTINCT ON returned whichever feed happened to write last.
+    """
+    _run(db_session, db_settings, AIR, pm25=55.0)
+    _run(db_session, db_settings, WEATHER, temp=31.0)
+    _run(db_session, db_settings, TRAFFIC, traffic_score=42.0)
+
+    rows = list(
+        db_session.scalars(
+            select(Observation).where(
+                Observation.lat == STATION.lat, Observation.lon == STATION.lon
+            )
+        )
+    )
+    assert len(rows) == 1
+    assert (rows[0].pm25, rows[0].temp, rows[0].traffic_score) == (55.0, 31.0, 42.0)
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("weather_first", [True, False])
+def test_the_authority_decides_a_contested_field_whatever_the_order(
+    db_session: Session, db_settings: Settings, three_feeds: None, weather_first: bool
+) -> None:
+    """`temp` arrives from the air-quality feed and the weather feed at once,
+    and they disagree. Without an authority the winner was decided by the order
+    of a tuple in the adapter registry -- deterministic, but for no reason
+    anyone could point at, and it changed if the tuple was ever reordered."""
+    order = [(WEATHER, 31.0), (AIR, 20.0)] if weather_first else [(AIR, 20.0), (WEATHER, 31.0)]
+    for adapter_type, temp in order:
+        _run(db_session, db_settings, adapter_type, temp=temp)
+
+    assert _row_at(db_session).temp == 31.0
+
+
+@pytest.mark.db
+def test_a_feed_may_fill_a_gap_in_a_field_it_does_not_own(
+    db_session: Session, db_settings: Settings, three_feeds: None
+) -> None:
+    """Deferring is not the same as being ignored: a value nobody authoritative
+    has supplied is better than a NULL, which is why the fallback exists."""
+    _run(db_session, db_settings, AIR, pm25=55.0, temp=20.0)
+
+    assert _row_at(db_session).temp == 20.0
+
+    _run(db_session, db_settings, WEATHER, temp=31.0)
+
+    assert _row_at(db_session).temp == 31.0
+
+
+@pytest.mark.db
+def test_a_generated_row_never_merges_into_a_measured_one(
+    db_session: Session, db_settings: Settings, three_feeds: None
+) -> None:
+    """The line the merge must not cross (ETH-1).
+
+    The demo bundle describes the same centroids and the same hours as the live
+    feeds. Merging on location and time alone would fold generated values into
+    a row presented as measurement, which is the one blend no caveat can repair
+    after the fact.
+    """
+    synthetic = _feed("Generated Feed", frozenset({"pm25"}))
+    synthetic.spec = replace(synthetic.spec, synthetic=True)
+    db_session.add(DataSource(name=synthetic.spec.name, is_synthetic=True))
+    db_session.flush()
+
+    _run(db_session, db_settings, AIR, pm25=55.0)
+    _run(db_session, db_settings, synthetic, pm25=12.0)
+
+    rows = {
+        row.provenance: row.pm25
+        for row in db_session.scalars(
+            select(Observation).where(
+                Observation.lat == STATION.lat, Observation.lon == STATION.lon
+            )
+        )
+    }
+    assert rows == {Provenance.MEASURED: 55.0, Provenance.SYNTHETIC: 12.0}

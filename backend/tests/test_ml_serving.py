@@ -130,12 +130,15 @@ def test_the_loaded_summary_is_what_the_model_lab_shows(
 
 
 @pytest.fixture
-def trained(db_session: Session, db_settings: Settings, tmp_path) -> Settings:
+def trained(
+    db_session: Session, db_settings: Settings, tmp_path, claim_stations
+) -> Settings:
     """A registered ladder over one station, rolled back afterwards."""
     from db.models import DataSource, Observation, SourceStatus
 
     settings = db_settings.model_copy(update={"model_artifact_dir": str(tmp_path)})
     stations = geo_service.stations_from_districts(settings)[:1]
+    claim_stations(stations)
 
     source = DataSource(name="serving-test", status=SourceStatus.OFFLINE)
     db_session.add(source)

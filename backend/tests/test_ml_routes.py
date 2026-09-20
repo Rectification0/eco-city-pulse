@@ -50,11 +50,14 @@ def ml_client(db_session: Session, ml_settings: Settings) -> Iterator[TestClient
 
 
 @pytest.fixture
-def seeded(db_session: Session, ml_settings: Settings) -> DataSource:
+def seeded(
+    db_session: Session, ml_settings: Settings, claim_stations
+) -> DataSource:
     """One station, 45 days: enough to split, train and score quickly."""
     from db.models import Observation
 
     stations = geo_service.stations_from_districts(ml_settings)[:1]
+    claim_stations(stations)
     source = DataSource(
         name=f"ml-route-{id(db_session)}", status=SourceStatus.OFFLINE
     )

@@ -35,7 +35,12 @@ from core.config import Settings
 from core.exceptions import UploadRejectedError
 from services.adapters.base import AdapterSpec, SourceAdapter, SourceDomain
 from services.geo_service import Station
-from services.harmonizer import SourceReading, harmonize_coordinates, to_utc
+from services.harmonizer import (
+    MEASUREMENT_FIELDS,
+    SourceReading,
+    harmonize_coordinates,
+    to_utc,
+)
 
 UPLOAD_SOURCE_NAME = "Analyst Upload"
 
@@ -198,6 +203,11 @@ class UploadAdapter(SourceAdapter):
         domain=SourceDomain.BUNDLE,
         api_url=None,
         requires_credentials=False,
+        # Everything. An upload is a person deliberately correcting the record,
+        # so it outranks a feed rather than merely filling the feed's gaps --
+        # the opposite of the synthetic traffic fallback, which claims nothing
+        # and may only supply what no measurement did.
+        authoritative_for=frozenset(MEASUREMENT_FIELDS),
         description="CSV or JSON supplied by an analyst.",
     )
 
