@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from core.config import Settings, get_settings
 from core.exceptions import InsufficientDataError
 from db.models import Observation, Prediction
+from services import datasets
 from services.datasets import station_key
 from services.features import service as feature_service
 from services.ml import explain, intervals, preprocessing, serving
@@ -138,15 +139,26 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def latest_observation_time(
-    session: Session, *, lat: float | None = None, lon: float | None = None
+    session: Session,
+    *,
+    lat: float | None = None,
+    lon: float | None = None,
+    source_ids: tuple[int, ...] | None = None,
 ) -> datetime | None:
     """The newest hour on record, which is what "now" means to this platform.
 
     A request that names no time wants a forecast from the present, and the
     present is the last reading that arrived -- not the wall clock, which in
     demo mode may be hours ahead of the seeded data.
+
+    Scoped by ``source_ids`` for the same reason the features are: with a demo
+    bundle seeded and live ingestion running, the newest row overall is a live
+    one, and anchoring a forecast there while the features come from the demo
+    series would date the prediction to an hour the model has no history for.
     """
     statement = select(Observation.timestamp).order_by(Observation.timestamp.desc())
+    if source_ids is not None:
+        statement = statement.where(Observation.source_id.in_(list(source_ids)))
     if lat is not None and lon is not None:
         statement = statement.where(Observation.lat == lat, Observation.lon == lon)
     return session.scalars(statement.limit(1)).first()
@@ -168,6 +180,9 @@ def predict(
     """Forecast PM2.5 at ``lat/lon`` for ``at + horizon`` hours (FEAT-06, AC-9)."""
     settings = settings or get_settings()
     intervals.validate_coverage(coverage)
+    # Resolved once and used for both the anchor hour and the features, so a
+    # forecast is never dated from one provenance and built from another.
+    source_ids = datasets.resolve_source_ids(session, None, settings=settings)
 
     # --- 9.2: the registered model for this horizon -------------------------
     loaded = (
@@ -178,7 +193,9 @@ def predict(
 
     origin = _as_utc(at) if at is not None else None
     if origin is None:
-        newest = latest_observation_time(session, lat=lat, lon=lon)
+        newest = latest_observation_time(
+            session, lat=lat, lon=lon, source_ids=source_ids
+        )
         if newest is None:
             raise InsufficientDataError(
                 "No observations are available to forecast from.",
@@ -190,7 +207,7 @@ def predict(
 
     # --- 9.1: the features for that station at that hour --------------------
     row = feature_service.features_at(
-        session, loaded.transformer, at=origin, lat=lat, lon=lon
+        session, loaded.transformer, at=origin, lat=lat, lon=lon, source_ids=source_ids
     )
     matrix = preprocessing.encode(row, loaded.spec)[list(loaded.columns)]
 

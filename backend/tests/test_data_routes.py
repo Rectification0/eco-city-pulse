@@ -98,6 +98,7 @@ def test_sources_never_leak_a_credential(
             "id",
             "name",
             "api_url",
+            "is_synthetic",
             "status",
             "last_run",
             "domain",

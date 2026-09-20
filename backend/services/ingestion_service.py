@@ -103,12 +103,21 @@ def ensure_sources(session: Session) -> dict[str, DataSource]:
         source = existing.get(spec.name)
         if source is None:
             source = DataSource(
-                name=spec.name, api_url=spec.api_url, status=SourceStatus.OFFLINE
+                name=spec.name,
+                api_url=spec.api_url,
+                status=SourceStatus.OFFLINE,
+                is_synthetic=spec.synthetic,
             )
             session.add(source)
             existing[spec.name] = source
-        elif source.api_url != spec.api_url:
-            source.api_url = spec.api_url
+        else:
+            if source.api_url != spec.api_url:
+                source.api_url = spec.api_url
+            # Provenance is declared by the adapter, so the registry is the
+            # authority: a row whose flag drifted from its spec would quietly
+            # put modelled values into a measured scope.
+            if source.is_synthetic != spec.synthetic:
+                source.is_synthetic = spec.synthetic
 
     session.flush()
     return existing

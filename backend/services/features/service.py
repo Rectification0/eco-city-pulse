@@ -132,6 +132,12 @@ def build_features(
     the other way round.
     """
     settings = settings or get_settings()
+    # One provenance, chosen before anything is loaded, fingerprinted or
+    # cached: the scope has to reach the cache key too, or two scopes share
+    # one entry and each is served the other's answer.
+    source_ids = datasets.resolve_source_ids(
+        session, source_ids, settings=settings
+    )
 
     frame = datasets.load_observations(
         session, source_ids=source_ids, start=start, end=end

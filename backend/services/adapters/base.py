@@ -45,6 +45,11 @@ class AdapterSpec:
     # False for the demo bundle and the synthetic fallback: they are always
     # available, so "no API key" is not a reason to consider them offline.
     requires_credentials: bool = True
+    # True for the demo bundle and the traffic fallback: their values are
+    # modelled, not measured. Reflected into ``data_sources.is_synthetic`` so
+    # the analytics scope can keep the two provenances apart without holding a
+    # list of source names (see ``datasets.resolve_source_ids``).
+    synthetic: bool = False
     description: str = ""
 
 

@@ -57,6 +57,7 @@ class DemoAdapter(SourceAdapter):
         domain=SourceDomain.BUNDLE,
         api_url=None,
         requires_credentials=False,
+        synthetic=True,
         description="Offline synthetic history: air quality, weather, traffic.",
     )
 

@@ -23,7 +23,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from api.dependencies import get_db_session
-from core.config import Settings, get_settings
+from core.config import AnalyticsScope, Settings, get_settings
 from db.session import get_engine
 from main import create_app
 
@@ -166,10 +166,20 @@ def db_settings(live_settings: Settings) -> Settings:
 
     Credentials for the upstream APIs are blanked so a developer who *does*
     have a real AQICN key exported cannot make the test suite call it.
+
+    ``analytics_source_scope`` is pinned for the same reason. These tests create
+    their own ``DataSource`` and assert on the rows they inserted under it; a
+    scope inherited from the developer's .env would decide those rows were the
+    wrong provenance and quietly substitute whatever else is in the database --
+    a test that passes or fails on data it never wrote. ``ALL`` is the absence
+    of the policy, which is what the fixtures were written against. The policy
+    itself is covered by ``test_source_scope.py``, where the scope is the
+    subject rather than the environment.
     """
     return live_settings.model_copy(
         update={
             "app_env": "test",
+            "analytics_source_scope": AnalyticsScope.ALL,
             "aqicn_api_key": SecretStr(""),
             "openweather_api_key": SecretStr(""),
             "tomtom_api_key": SecretStr(""),

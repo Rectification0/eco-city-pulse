@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.dependencies import SessionDep, SettingsDep
-from core.config import IngestionMode, Settings
+from core.config import AnalyticsScope, IngestionMode, Settings
 from core.exceptions import UploadRejectedError
 from db.models import (
     DataSource,
@@ -131,6 +131,13 @@ class SourceHealth(BaseModel):
     requires_credentials: bool = Field(
         description="False for the demo bundle, uploads, and the synthetic fallback."
     )
+    is_synthetic: bool = Field(
+        description=(
+            "Whether this source generates values rather than measuring them. "
+            "ETH-1: a client showing a number built from these rows has to be "
+            "able to say so."
+        )
+    )
     credentials_configured: bool = Field(
         description=(
             "Whether the source is ready to run. For a source that needs no "
@@ -145,6 +152,13 @@ class SourceHealth(BaseModel):
 class SourcesResponse(BaseModel):
     sources: list[SourceHealth]
     ingestion_mode: IngestionMode
+    analytics_source_scope: AnalyticsScope = Field(
+        description=(
+            "Which provenance EDA, training and serving read when a request "
+            "names no source_ids. demo = synthetic only, live = measured only, "
+            "all = both pooled."
+        )
+    )
     generated_at: datetime
 
 
@@ -177,6 +191,7 @@ async def get_sources(session: SessionDep, settings: SettingsDep) -> SourcesResp
 
     return SourcesResponse(
         ingestion_mode=settings.ingestion_mode,
+        analytics_source_scope=settings.analytics_source_scope,
         generated_at=datetime.now(timezone.utc),
         sources=[
             SourceHealth(
@@ -192,6 +207,7 @@ async def get_sources(session: SessionDep, settings: SettingsDep) -> SourcesResp
                     else True
                 ),
                 credentials_configured=configured.get(source.name, True),
+                is_synthetic=source.is_synthetic,
                 observation_count=counts.get(source.id, (0, None))[0],
                 last_observation_at=counts.get(source.id, (0, None))[1],
                 latest_run=latest_runs.get(source.id),

@@ -101,7 +101,11 @@ def dataset_version(
         func.count(Observation.id).filter(Observation.is_anomaly.is_(True)),
     )
 
-    if source_ids:
+    # `is not None` for the same reason as in ``load_observations``: the
+    # fingerprint has to cover exactly the slice that was loaded. If it covered
+    # every source while the frame held one scope's worth, two scopes would
+    # share a cache key and each would be served the other's answer.
+    if source_ids is not None:
         statement = statement.where(Observation.source_id.in_(list(source_ids)))
     if start is not None:
         statement = statement.where(Observation.timestamp >= start)

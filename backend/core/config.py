@@ -38,6 +38,29 @@ class IngestionMode(str, Enum):
     DEMO = "demo"
 
 
+class AnalyticsScope(str, Enum):
+    """Which provenance the analytics layer reads when a request names none.
+
+    ``observations`` holds every source in one table, so "no filter" used to
+    mean "synthetic and measured together" -- 31,680 demo rows and a handful of
+    live ones pooled into a single profile that then described neither. This
+    setting makes the choice explicit and, above all, *stable*: the alternative
+    of switching automatically once real data appears would silently redraw
+    every chart the instant the first ingest landed.
+
+    ``DEMO`` is the default because the demo bundle is what a fresh clone has
+    (AC-2), and because live history starts at zero rows -- nothing can be
+    modelled on it for weeks. Move to ``LIVE`` when the measured series is deep
+    enough to stand on its own. ``ALL`` restores the old pooled behaviour for
+    the case where someone deliberately wants both; it is never the default,
+    because blending should be something a person asked for.
+    """
+
+    DEMO = "demo"
+    LIVE = "live"
+    ALL = "all"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_ENV_FILES,
@@ -83,6 +106,11 @@ class Settings(BaseSettings):
     # Upload ceiling, enforced on bytes actually read (SEC-1). 10 MB is roughly
     # 150k rows of hourly observations.
     upload_max_bytes: int = 10_000_000
+
+    # --- Analytics ---
+    # Which sources EDA, features, training and serving read when a request
+    # does not name any. An explicit `source_ids` always wins over this.
+    analytics_source_scope: AnalyticsScope = AnalyticsScope.DEMO
 
     # --- Third-party API keys (optional by design: absent key => offline source) ---
     aqicn_api_key: SecretStr = SecretStr("")

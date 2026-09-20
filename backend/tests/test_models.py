@@ -62,7 +62,16 @@ LOG_TABLES = {"ingestion_runs", "quarantined_records"}
 # at that hour" is not a single row -- every station reports that hour. Matching
 # on time alone would pair a forecast for one district with a reading from
 # another and record the difference as model error (task 9.6).
-SPEC_EXTENSIONS: dict[str, set[str]] = {"predictions": {"lat", "lon"}}
+#
+# ``data_sources.is_synthetic``: specs §9 assumes every source measures
+# something, which stopped being true the moment the demo bundle and the
+# traffic fallback were allowed to sit in the same table as AQICN. Without the
+# flag, a request that named no sources pooled generated values with measured
+# ones and reported the result as observation -- the claim ETH-1 forbids.
+SPEC_EXTENSIONS: dict[str, set[str]] = {
+    "data_sources": {"is_synthetic"},
+    "predictions": {"lat", "lon"},
+}
 
 
 def test_all_four_spec_tables_are_defined() -> None:

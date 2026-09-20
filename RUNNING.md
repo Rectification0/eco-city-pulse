@@ -109,6 +109,24 @@ Without a key, that same call still succeeds: the keyless source degrades to
 source fails**, which is DR-1 expressed in the API — read the per-source
 `status`, not the HTTP code.
 
+### Ingesting does not change what the analytics read
+
+Live rows land beside the demo bundle in the same `observations` table, but
+`ANALYTICS_SOURCE_SCOPE` decides which of the two every EDA, training and
+prediction request sees when it names no `source_ids`:
+
+| Scope | Reads |
+|-------|-------|
+| `demo` (default) | the demo bundle and the traffic fallback |
+| `live` | AQICN, OpenWeather, TomTom, uploads |
+| `all` | both, pooled |
+
+It stays on `demo` until the measured series is long enough to model on —
+ingesting for an afternoon gives you tens of rows against 31,680 synthetic
+ones, and pooling them would describe neither. `GET /data/sources` reports the
+active scope and flags each source's `is_synthetic`. A request that passes
+`source_ids` explicitly always overrides the setting.
+
 ### Did it work?
 
 Open **Admin**, or:

@@ -20,8 +20,9 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.config import AnalyticsScope, Settings
 from core.exceptions import InsufficientDataError
-from db.models import Observation
+from db.models import DataSource, Observation
 
 # The measured columns, in the order they appear in ``observations``. Named
 # once so the quality engine, the EDA profile and the feature builder cannot
@@ -70,6 +71,51 @@ def station_key(lat: float, lon: float) -> str:
     return f"{lat:.5f},{lon:.5f}"
 
 
+def resolve_source_ids(
+    session: Session,
+    source_ids: tuple[int, ...] | list[int] | None,
+    *,
+    settings: Settings | None = None,
+) -> tuple[int, ...] | None:
+    """The sources a request should read, given what it asked for.
+
+    An explicit ``source_ids`` is returned untouched: a caller that named its
+    sources has already answered the question, and second-guessing it would
+    make `source_ids=[5]` mean something other than "source 5".
+
+    Otherwise the configured ``analytics_source_scope`` decides, and the point
+    is that it decides *one* provenance. Pooling the demo bundle with live
+    readings produces statistics that describe neither: the synthetic rows
+    outnumber the real ones by orders of magnitude for weeks after live
+    ingestion starts, so a "measured" profile would in fact be a profile of the
+    generator, and the model trained on it would learn the generator's
+    autocorrelation rather than the city's.
+
+    ``None`` for ``settings`` means no policy at all -- every source, the
+    behaviour before this existed. That is what keeps unit tests hermetic:
+    a test calling ``load_observations`` directly gets exactly the rows it
+    inserted, and does not have to know what the developer's .env says.
+
+    Returns ``()`` rather than ``None`` when a scope matches no source. The two
+    are not interchangeable: ``None`` means "no filter" and ``()`` means "no
+    sources", and collapsing them is precisely how a scope that matched nothing
+    would silently widen to everything.
+    """
+    if source_ids:
+        return tuple(source_ids)
+    if settings is None or settings.analytics_source_scope is AnalyticsScope.ALL:
+        return None
+
+    want_synthetic = settings.analytics_source_scope is AnalyticsScope.DEMO
+    return tuple(
+        session.scalars(
+            select(DataSource.id)
+            .where(DataSource.is_synthetic.is_(want_synthetic))
+            .order_by(DataSource.id)
+        ).all()
+    )
+
+
 def load_observations(
     session: Session,
     *,
@@ -87,7 +133,9 @@ def load_observations(
     """
     statement = select(Observation).order_by(Observation.timestamp)
 
-    if source_ids:
+    # `is not None`, not truthiness: an empty tuple is a resolved scope that
+    # matched no source, and must return no rows rather than every row.
+    if source_ids is not None:
         statement = statement.where(Observation.source_id.in_(list(source_ids)))
     if start is not None:
         statement = statement.where(Observation.timestamp >= start)
@@ -174,6 +222,7 @@ __all__ = [
     "DatasetWindow",
     "describe_window",
     "load_observations",
+    "resolve_source_ids",
     "prepare_frame",
     "require_rows",
     "station_key",

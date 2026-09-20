@@ -57,6 +57,7 @@ class SyntheticTrafficAdapter(SourceAdapter):
         domain=SourceDomain.TRAFFIC,
         api_url=None,  # nothing to call
         requires_credentials=False,
+        synthetic=True,
         description="Modelled congestion index used when no traffic API key is set.",
     )
 

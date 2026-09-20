@@ -71,6 +71,13 @@ class DataSource(Base):
         server_default=SourceStatus.OFFLINE.value,
     )
     last_run: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Whether this source's values are modelled rather than measured. A column
+    # and not a name check: "is the demo bundle" is a fact about provenance,
+    # and encoding it as a string comparison would break the moment a source is
+    # renamed. Kept in sync from the adapter registry by ``ensure_sources``.
+    is_synthetic: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     observations: Mapped[list[Observation]] = relationship(
         back_populates="source", cascade="save-update, merge", passive_deletes=True

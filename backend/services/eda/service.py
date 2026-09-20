@@ -64,6 +64,12 @@ def build_profile(
 ) -> ProfileResult:
     """The full statistical profile for a slice (FEAT-02, AC-3)."""
     settings = settings or get_settings()
+    # One provenance, chosen before anything is loaded, fingerprinted or
+    # cached: the scope has to reach the cache key too, or two scopes share
+    # one entry and each is served the other's answer.
+    source_ids = datasets.resolve_source_ids(
+        session, source_ids, settings=settings
+    )
 
     version = cache.dataset_version(
         session, source_ids=source_ids, start=start, end=end
@@ -123,6 +129,12 @@ def decompose_series(
 ) -> tuple[decomposition.DecompositionResult, DatasetVersion, bool]:
     """STL for one station's series (task 4.5)."""
     settings = settings or get_settings()
+    # One provenance, chosen before anything is loaded, fingerprinted or
+    # cached: the scope has to reach the cache key too, or two scopes share
+    # one entry and each is served the other's answer.
+    source_ids = datasets.resolve_source_ids(
+        session, source_ids, settings=settings
+    )
 
     version = cache.dataset_version(
         session, source_ids=source_ids, start=start, end=end
@@ -169,6 +181,12 @@ def generate_report(
 ) -> report.ReportResult:
     """Render the standalone HTML EDA report (task 4.7, Module 5)."""
     settings = settings or get_settings()
+    # One provenance, chosen before anything is loaded, fingerprinted or
+    # cached: the scope has to reach the cache key too, or two scopes share
+    # one entry and each is served the other's answer.
+    source_ids = datasets.resolve_source_ids(
+        session, source_ids, settings=settings
+    )
 
     frame = datasets.load_observations(
         session, source_ids=source_ids, start=start, end=end
@@ -271,6 +289,12 @@ def reduce_dimensions(
 ) -> tuple[reduction.ReductionResult, DatasetVersion, bool, str | None]:
     """PCA components, explained variance, loadings and the ESI (tasks 6.2-6.4)."""
     settings = settings or get_settings()
+    # One provenance, chosen before anything is loaded, fingerprinted or
+    # cached: the scope has to reach the cache key too, or two scopes share
+    # one entry and each is served the other's answer.
+    source_ids = datasets.resolve_source_ids(
+        session, source_ids, settings=settings
+    )
 
     version = cache.dataset_version(
         session, source_ids=source_ids, start=start, end=end
@@ -321,6 +345,12 @@ def project_tsne(
     (design §9).
     """
     settings = settings or get_settings()
+    # One provenance, chosen before anything is loaded, fingerprinted or
+    # cached: the scope has to reach the cache key too, or two scopes share
+    # one entry and each is served the other's answer.
+    source_ids = datasets.resolve_source_ids(
+        session, source_ids, settings=settings
+    )
 
     version = cache.dataset_version(
         session, source_ids=source_ids, start=start, end=end
