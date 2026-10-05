@@ -345,6 +345,31 @@ def test_an_unsupported_perturbation_for_a_model_says_what_to_use_instead(
     assert explain.PATH_DEPENDENT in str(caught.value)
 
 
+def test_a_tree_backend_that_cannot_load_is_reported_as_unavailable(
+    dataset: tuple[pd.DataFrame, pd.Series], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SHAP imports its compiled tree kernel lazily, so a blocked DLL fails
+    after ``import shap`` has succeeded. Unmapped, that is a 500 on every
+    forecast; mapped, it is the 503 the environment actually deserves, and the
+    caller can tell a missing capability from a bug.
+    """
+    matrix, _ = dataset
+
+    class BlockedShap:
+        @staticmethod
+        def TreeExplainer(*args, **kwargs):  # noqa: N802 - mirrors shap's API
+            raise ImportError("DLL load failed while importing _cext")
+
+    monkeypatch.setattr(explain, "_load_shap", lambda: BlockedShap)
+    explainer = explain.ModelExplainer(fitted("random_forest", dataset), COLUMNS)
+
+    with pytest.raises(explain.ExplainerUnavailableError) as caught:
+        explainer.explain(matrix.iloc[:5])
+
+    assert caught.value.status_code == 503
+    assert "_cext" in caught.value.details["error"]
+
+
 def test_an_unknown_perturbation_is_refused(
     dataset: tuple[pd.DataFrame, pd.Series]
 ) -> None:

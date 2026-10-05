@@ -303,6 +303,21 @@ class ModelExplainer:
                     "error": str(exc),
                 },
             ) from exc
+        except ImportError as exc:
+            # ``import shap`` succeeding does not mean TreeSHAP works: the
+            # compiled tree kernel (``shap._cext``) is imported only when the
+            # first tree is loaded. A host that blocks that one DLL — Windows
+            # Application Control has, here — would otherwise surface as a bare
+            # 500 on every forecast. It is the same environmental cause
+            # ``_load_shap`` already maps, so it gets the same 503.
+            raise ExplainerUnavailableError(
+                "SHAP is unavailable: its compiled tree backend could not be "
+                "loaded.",
+                details={
+                    "estimator": type(self.inner).__name__,
+                    "error": str(exc),
+                },
+            ) from exc
 
         base = np.asarray(self._shap_explainer.expected_value, dtype="float64")
         return values, float(base.reshape(-1)[0])
