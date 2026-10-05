@@ -206,6 +206,7 @@
 | 10.15 | Admin view — ingestion logs, source health, threshold configuration | specs §4 | S | [x] |
 | 10.16 | Persistent ethics disclaimer: sensor-placement bias + correlation ≠ causation | ETH-1, AC-11 | M | [x] |
 | 10.17 | Loading, empty, and error states for every data-backed view | — | S | [x] |
+| 10.18 | **EDA Studio** — descriptive statistics table from the `/eda/profile` univariate layer; missing values shown as "—" | FEAT-02, AC-3 | S | [x] |
 
 **Exit criteria:** all three screens render against real backend data with the disclaimer visible. *(AC-10, AC-11)*
 

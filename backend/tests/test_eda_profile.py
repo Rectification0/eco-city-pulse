@@ -145,6 +145,44 @@ def test_ac3_fields_are_present_for_every_column(field: str) -> None:
         assert field in column
 
 
+# Every field the EDA Studio descriptive-statistics table reads (task 10.18).
+DESCRIPTIVE_TABLE_FIELDS = (
+    "column", "count", "mean", "median", "std", "min",
+    "q1", "q3", "iqr", "max", "skewness", "kurtosis",
+)
+
+
+def test_every_descriptive_table_field_is_present_for_every_column() -> None:
+    """The UI table renders these keys verbatim rather than recomputing them,
+    so a renamed or dropped key would blank a column silently, not fail loudly.
+    """
+    payload = profile.build(frame_from(pm25=[1.0, 2.0, 3.0, 4.0, 9.0])).as_dict()
+
+    for column in payload["univariate"]:
+        assert set(DESCRIPTIVE_TABLE_FIELDS) <= column.keys(), column["column"]
+
+
+def test_undefined_statistics_serialise_as_null_never_nan() -> None:
+    """The table shows a dash for null; a NaN would reach the browser as invalid
+    JSON (or, through a lenient encoder, as a number that renders as "NaN").
+    An all-missing column and a column too short for skew/kurtosis are the two
+    ways a statistic becomes undefined.
+    """
+    import json
+
+    payload = profile.build(
+        frame_from(pm25=[1.0, 2.0], pm10=[float("nan"), float("inf")])
+    ).as_dict()
+    by_column = {entry["column"]: entry for entry in payload["univariate"]}
+
+    # allow_nan=False raises on any NaN/inf left anywhere in the stats.
+    json.dumps(payload["univariate"], allow_nan=False)
+    assert by_column["pm10"]["count"] == 0
+    assert all(by_column["pm10"][f] is None for f in DESCRIPTIVE_TABLE_FIELDS[2:])
+    assert by_column["pm25"]["skewness"] is None
+    assert by_column["pm25"]["kurtosis"] is None
+
+
 # --- 4.2 Bivariate ----------------------------------------------------------
 
 

@@ -249,7 +249,7 @@ PostGIS extension required for spatial queries.
 | Screen | Requirements |
 |--------|--------------|
 | **Overview Dashboard** | Hero KPIs (current ESI, PM2.5); Leaflet map showing spatial pollution gradients; 24-hour prediction trendline. |
-| **EDA Studio** | Missingness matrix; Plotly histograms; interactive correlation heatmap; parallel coordinates; STL decomposition overlays. *Extension (§6.4):* scatter plot, grouped bar chart, grouped boxplot, pair plot, Andrews curves. |
+| **EDA Studio** | Missingness matrix; descriptive statistics table (count, mean, median, std, min, Q1, Q3, IQR, max, skewness, kurtosis per numeric column — rendered from the FEAT-02 `/eda/profile` payload, not recomputed); Plotly histograms; interactive correlation heatmap; parallel coordinates; STL decomposition overlays. *Extension (§6.4):* scatter plot, grouped bar chart, grouped boxplot, pair plot, Andrews curves. |
 | **Model Lab** | Table of trained models; hyperparameter configurations; metrics; feature importance bar charts. |
 
 ---

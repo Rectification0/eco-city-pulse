@@ -48,6 +48,7 @@ import {
   type AndrewsClassBy,
   type Grouping,
   type ProfileResponse,
+  type UnivariateStats,
 } from '../services/api'
 
 export default function EdaStudio() {
@@ -59,6 +60,7 @@ export default function EdaStudio() {
         {(data) => (
           <>
             <Missingness profile={data} />
+            <DescriptiveStats profile={data} />
             <div className="grid gap-6 lg:grid-cols-2">
               <Distributions profile={data} />
               <Correlation profile={data} />
@@ -135,6 +137,89 @@ function Missingness({ profile }: { profile: ProfileResponse }) {
           showlegend: false,
         })}
       />
+    </Card>
+  )
+}
+
+/* --- 10.18: descriptive statistics table ----------------------------------- */
+
+// Each statistic is read straight off the FEAT-02 univariate layer; the browser
+// computes nothing. Order follows the five-number summary so Q1/IQR/Q3 sit
+// between the min and max they are bounded by.
+const DESCRIPTIVE_COLUMNS: [string, keyof UnivariateStats][] = [
+  ['Mean', 'mean'],
+  ['Median', 'median'],
+  ['Std dev', 'std'],
+  ['Min', 'min'],
+  ['Q1', 'q1'],
+  ['Q3', 'q3'],
+  ['IQR', 'iqr'],
+  ['Max', 'max'],
+  ['Skewness', 'skewness'],
+  ['Kurtosis', 'kurtosis'],
+]
+
+/**
+ * The backend already maps NaN and ±inf to `null` (and too few points for skew
+ * or kurtosis to `null`), so a missing value is shown as a dash — never as 0,
+ * which would read as a real measurement.
+ */
+function formatStat(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '—'
+}
+
+function DescriptiveStats({ profile }: { profile: ProfileResponse }) {
+  return (
+    <Card
+      title="Descriptive statistics"
+      subtitle="Computed on observed values only — missing readings are excluded, not zero-filled"
+      note="Std dev uses the sample denominator (n − 1). Kurtosis is excess kurtosis, so a normal distribution scores 0. A dash means the statistic is undefined: no observed values, or too few points (skewness needs 3, kurtosis 4)."
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="whitespace-nowrap px-3 py-2 font-medium">Variable</th>
+              <th className="whitespace-nowrap px-3 py-2 text-right font-medium">Count</th>
+              {DESCRIPTIVE_COLUMNS.map(([head]) => (
+                <th key={head} className="whitespace-nowrap px-3 py-2 text-right font-medium">
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {profile.univariate.map((stat) => (
+              <tr key={stat.column} className="border-t border-slate-800">
+                <td className="whitespace-nowrap px-3 py-2">
+                  <span className="text-slate-200">{columnLabel(stat.column)}</span>
+                  {COLUMN_UNITS[stat.column] && (
+                    <span className="ml-1.5 text-xs text-slate-500">
+                      {COLUMN_UNITS[stat.column]}
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-300">
+                  {stat.count.toLocaleString()}
+                </td>
+                {DESCRIPTIVE_COLUMNS.map(([head, key]) => {
+                  const text = formatStat(stat[key])
+                  return (
+                    <td
+                      key={head}
+                      className={`px-3 py-2 text-right tabular-nums ${
+                        text === '—' ? 'text-slate-600' : 'text-slate-300'
+                      }`}
+                    >
+                      {text}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   )
 }
