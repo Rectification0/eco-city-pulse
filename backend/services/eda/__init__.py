@@ -10,6 +10,8 @@ concerns, each with its own statistical reasoning worth reading on its own.
 - ``report``        — self-contained HTML report (4.7)
 - ``reduction``     — PCA, loadings and the 0-100 ESI (6.1-6.3, FEAT-04)
 - ``manifold``      — t-SNE, for the EDA Studio and nothing else (6.5)
+- ``bands``         — CPCB PM2.5 bands, the backend's one definition (12.1)
+- ``visual``        — scatter, grouped bars/boxes, pair plot, Andrews curves (12.2-12.6)
 
 ``service`` is the entry point the routes use: it loads the slice, consults the
 cache, and returns the profile.
@@ -19,7 +21,16 @@ that a machine where the compiled extension cannot load still gets the rest of
 the engine rather than an import error at startup.
 """
 
-from services.eda import cache, manifold, profile, reduction, report, service
+from services.eda import (
+    bands,
+    cache,
+    manifold,
+    profile,
+    reduction,
+    report,
+    service,
+    visual,
+)
 from services.eda.cache import PROFILE_CACHE, DatasetVersion, dataset_version
 from services.eda.manifold import ProjectionResult
 from services.eda.profile import (
@@ -31,11 +42,15 @@ from services.eda.profile import (
 )
 from services.eda.reduction import ComponentLoadings, ESIModel, ReductionResult
 from services.eda.service import (
+    andrews_curves,
     build_profile,
     decompose_series,
     generate_report,
+    grouped_summary,
+    pair_plot,
     project_tsne,
     reduce_dimensions,
+    scatter_plot,
 )
 
 __all__ = [
@@ -50,16 +65,22 @@ __all__ = [
     "ReductionResult",
     "StatisticalProfile",
     "UnivariateStats",
+    "andrews_curves",
+    "bands",
     "build_profile",
     "cache",
     "dataset_version",
     "decompose_series",
     "generate_report",
+    "grouped_summary",
     "manifold",
+    "pair_plot",
     "profile",
     "project_tsne",
     "reduce_dimensions",
     "reduction",
     "report",
+    "scatter_plot",
     "service",
+    "visual",
 ]

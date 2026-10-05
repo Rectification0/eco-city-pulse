@@ -215,6 +215,10 @@ is the security boundary (SEC-1). Full contract at
 | `GET` | `/eda/cache` | Profile cache statistics | ✅ 4 |
 | `POST` | `/eda/reduce` | PCA components, variance, loadings, ESI | ✅ 6 |
 | `POST` | `/eda/tsne` | t-SNE 2D projection (EDA Studio only) | ✅ 6 |
+| `POST` | `/eda/scatter` | Scatter points, OLS line, r / ρ / r², n (VIZ-1) | ✅ 12 |
+| `POST` | `/eda/grouped` | Grouped means ± 95% CI and box summaries (VIZ-2, VIZ-3) | ✅ 12 |
+| `POST` | `/eda/pairplot` | Sampled scatter matrix of every measurement (VIZ-4) | ✅ 12 |
+| `POST` | `/eda/andrews` | Andrews curves per class, exact mean curves (VIZ-5) | ✅ 12 |
 | `POST` | `/ml/train` | Train the ladder and register the results | ✅ 7 |
 | `GET` | `/ml/models` | The model registry, newest first | ✅ 7 |
 | `GET` | `/ml/models/{id}/importance` | SHAP feature importance for one model | ✅ 8 |
@@ -247,6 +251,7 @@ Errors share one envelope from `core/exceptions.py`:
 | **10** | Frontend — Dashboard, EDA Studio, Model Lab, Admin | ✅ Complete |
 | **11** | Security, quality & release — audits as tests, AC walkthrough | ✅ Complete |
 | **Post-release** | Provenance scope · cross-source merge · retention | ✅ Complete |
+| **12** | Visual EDA — scatter, grouped bars & boxplots, pair plot, Andrews curves | ✅ Complete |
 
 Track detail in [`tasks.md`](./tasks.md).
 

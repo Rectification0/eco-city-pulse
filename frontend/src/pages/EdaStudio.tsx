@@ -13,6 +13,12 @@
  * - **Missingness and STL use small multiples, never a shared axis.** Trend,
  *   seasonal and residual live on wildly different scales; one pair of axes for
  *   all three is a dual-axis chart in disguise.
+ *
+ * The Phase 12 cards (scatter, grouped bars and boxes, pair plot, Andrews
+ * curves — specs §6.4) follow the same rule: the backend sends a sample of
+ * points plus statistics computed on every row, and the card says which is
+ * which. Flagged anomalies get a different marker *shape* as well as colour, so
+ * they stay distinguishable without colour (AC-5, VIZ-6).
  */
 
 import { useState } from 'react'
@@ -21,18 +27,26 @@ import Card from '../components/Card'
 import Plot from '../charts/Plot'
 import {
   CATEGORICAL,
+  COLUMN_UNITS,
   DIVERGING,
   INK,
   SEQUENTIAL,
   baseLayout,
+  groupColors,
   label as columnLabel,
 } from '../charts/theme'
 import {
+  getAndrews,
   getDecomposition,
+  getGrouped,
+  getPairPlot,
   getProfile,
   getProjection,
+  getScatter,
   getStationSeries,
   getLatestObservations,
+  type AndrewsClassBy,
+  type Grouping,
   type ProfileResponse,
 } from '../services/api'
 
@@ -53,11 +67,21 @@ export default function EdaStudio() {
         )}
       </Async>
 
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Scatter />
+        <Grouped />
+      </div>
+
       <Decomposition />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <ParallelCoordinates />
         <Clusters />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <PairPlot />
+        <AndrewsCurves />
       </div>
     </div>
   )
@@ -490,6 +514,593 @@ function Clusters() {
             })}
           />
         )}
+      </Async>
+    </Card>
+  )
+}
+
+/* --- Phase 12: shared pieces ---------------------------------------------- */
+
+const MEASURES = ['pm25', 'pm10', 'temp', 'humidity', 'traffic_score'] as const
+
+const GROUPING_LABELS: Record<Grouping, string> = {
+  hour_of_day: 'Hour of day (IST)',
+  time_of_day: 'Time of day',
+  day_of_week: 'Day of week',
+  is_weekend: 'Weekday / weekend',
+  month: 'Month',
+  station: 'Station',
+  pm25_band: 'PM2.5 band',
+}
+
+const GROUPINGS = Object.keys(GROUPING_LABELS) as Grouping[]
+
+const ANDREWS_CLASSES: AndrewsClassBy[] = ['time_of_day', 'pm25_band', 'is_weekend', 'month']
+
+/** Flagged readings: a different *shape* and the second categorical slot. */
+const FLAGGED = { symbol: 'x', color: CATEGORICAL[1] } as const
+
+interface SelectProps<T extends string> {
+  value: T
+  options: readonly T[]
+  onChange: (value: T) => void
+  label: (value: T) => string
+  ariaLabel: string
+}
+
+function Select<T extends string>({ value, options, onChange, label, ariaLabel }: SelectProps<T>) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value as T)}
+      className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200"
+      aria-label={ariaLabel}
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {label(option)}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function axisTitle(column: string): string {
+  const unit = COLUMN_UNITS[column]
+  return unit ? `${columnLabel(column)} (${unit})` : columnLabel(column)
+}
+
+function fixed(value: number | null | undefined, digits = 2): string {
+  return value === null || value === undefined ? '—' : value.toFixed(digits)
+}
+
+/** Colour swatches *with* their labels, plus the flagged-anomaly marker. */
+function Legend({ colors }: { colors: [string, string][] }) {
+  return (
+    <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
+      {colors.map(([name, color]) => (
+        <li key={name} className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+          {name}
+        </li>
+      ))}
+      <li className="flex items-center gap-1.5">
+        <span className="font-bold" style={{ color: FLAGGED.color }}>
+          ×
+        </span>
+        flagged anomaly
+      </li>
+    </ul>
+  )
+}
+
+/* --- 12.9 / VIZ-1: scatter plot ------------------------------------------- */
+
+function Scatter() {
+  const [x, setX] = useState<string>('traffic_score')
+  const [y, setY] = useState<string>('pm25')
+  const [colorBy, setColorBy] = useState<Grouping | 'none'>('none')
+
+  const scatter = useAsync(
+    () => getScatter({ x, y, color_by: colorBy === 'none' ? null : colorBy }),
+    [x, y, colorBy],
+  )
+
+  return (
+    <Card
+      title="Scatter plot"
+      subtitle="Two measurements, every hour a point, with a least-squares line"
+      note={scatter.state.status === 'ready' ? scatter.state.data.caveats.join(' ') : undefined}
+      actions={
+        <div className="flex flex-wrap gap-1.5">
+          <Select
+            value={x}
+            options={MEASURES.filter((column) => column !== y)}
+            onChange={setX}
+            label={columnLabel}
+            ariaLabel="Scatter x axis"
+          />
+          <Select
+            value={y}
+            options={MEASURES.filter((column) => column !== x)}
+            onChange={setY}
+            label={columnLabel}
+            ariaLabel="Scatter y axis"
+          />
+          <Select
+            value={colorBy}
+            options={['none', ...GROUPINGS] as (Grouping | 'none')[]}
+            onChange={setColorBy}
+            label={(value) => (value === 'none' ? 'No colour' : GROUPING_LABELS[value])}
+            ariaLabel="Colour points by"
+          />
+        </div>
+      }
+    >
+      <Async state={scatter.state} retry={scatter.retry} height="h-80">
+        {(data) => {
+          const indices = data.x.map((_, index) => index)
+          const normal = indices.filter((i) => !data.is_anomaly[i])
+          const flagged = indices.filter((i) => data.is_anomaly[i])
+          const pick = (chosen: number[], values: (number | null)[]) =>
+            chosen.map((i) => values[i] ?? null)
+
+          const colors =
+            data.color_by && data.categories ? groupColors(data.color_by, data.categories) : {}
+          const series =
+            data.color_by && data.categories
+              ? data.categories.map((name) => ({
+                  name,
+                  color: colors[name] ?? INK.muted,
+                  indices: normal.filter((i) => data.groups?.[i] === name),
+                }))
+              : [{ name: 'Reading', color: CATEGORICAL[0], indices: normal }]
+
+          return (
+            <div className="space-y-2">
+              <Plot
+                ariaLabel={`Scatter of ${columnLabel(data.y_column)} against ${columnLabel(
+                  data.x_column,
+                )} with a least-squares line`}
+                className="h-80 w-full"
+                data={[
+                  ...series.map((entry) => ({
+                    type: 'scattergl' as const,
+                    mode: 'markers' as const,
+                    name: entry.name,
+                    x: pick(entry.indices, data.x),
+                    y: pick(entry.indices, data.y),
+                    marker: { size: 4, color: entry.color, opacity: 0.6 },
+                    hovertemplate: `%{x:.1f}, %{y:.1f}<extra>${entry.name}</extra>`,
+                  })),
+                  {
+                    type: 'scattergl',
+                    mode: 'markers',
+                    name: 'Flagged anomaly',
+                    x: pick(flagged, data.x),
+                    y: pick(flagged, data.y),
+                    marker: { size: 7, symbol: FLAGGED.symbol, color: FLAGGED.color },
+                    hovertemplate: '%{x:.1f}, %{y:.1f}<extra>flagged</extra>',
+                  },
+                  {
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Least-squares line',
+                    x: data.line_x,
+                    y: data.line_y,
+                    line: { color: INK.primary, width: 2 },
+                    hoverinfo: 'skip',
+                  },
+                ]}
+                layout={baseLayout({
+                  margin: { l: 56, r: 12, t: 8, b: 72 },
+                  xaxis: {
+                    title: { text: axisTitle(data.x_column), font: { color: INK.muted } },
+                    gridcolor: INK.grid,
+                    tickfont: { color: INK.muted },
+                  },
+                  yaxis: {
+                    title: { text: axisTitle(data.y_column), font: { color: INK.muted } },
+                    gridcolor: INK.grid,
+                    tickfont: { color: INK.muted },
+                  },
+                  legend: { orientation: 'h', y: -0.28, x: 0, font: { color: INK.secondary } },
+                })}
+              />
+              <p className="text-xs tabular-nums text-slate-400">
+                r = {fixed(data.pearson)} · ρ = {fixed(data.spearman)} · r² ={' '}
+                {fixed(data.r_squared, 3)} · slope {fixed(data.slope, 3)} · n ={' '}
+                {data.rows_used.toLocaleString()}
+                {data.sampled &&
+                  ` · ${data.points_returned.toLocaleString()} points drawn, sampled evenly`}
+                {` · ${data.anomalies_in_rows.toLocaleString()} flagged`}
+              </p>
+            </div>
+          )
+        }}
+      </Async>
+    </Card>
+  )
+}
+
+/* --- 12.9 / VIZ-2, VIZ-3: grouped bars and grouped boxplot ---------------- */
+
+function Grouped() {
+  const [measure, setMeasure] = useState<string>('pm25')
+  const [groupBy, setGroupBy] = useState<Grouping>('hour_of_day')
+  const [splitBy, setSplitBy] = useState<Grouping | 'none'>('none')
+
+  const grouped = useAsync(
+    () =>
+      getGrouped({ measure, group_by: groupBy, split_by: splitBy === 'none' ? null : splitBy }),
+    [measure, groupBy, splitBy],
+  )
+
+  return (
+    <Card
+      title="Grouped comparison"
+      subtitle="Mean with 95% interval per group, then the full spread as boxes"
+      note={grouped.state.status === 'ready' ? grouped.state.data.caveats.join(' ') : undefined}
+      actions={
+        <div className="flex flex-wrap gap-1.5">
+          <Select
+            value={measure}
+            options={MEASURES}
+            onChange={setMeasure}
+            label={columnLabel}
+            ariaLabel="Measurement to compare"
+          />
+          <Select
+            value={groupBy}
+            options={GROUPINGS}
+            onChange={(value) => {
+              setGroupBy(value)
+              if (value === splitBy) setSplitBy('none')
+            }}
+            label={(value) => GROUPING_LABELS[value]}
+            ariaLabel="Group by"
+          />
+          <Select
+            value={splitBy}
+            options={
+              ['none', ...GROUPINGS.filter((value) => value !== groupBy)] as (Grouping | 'none')[]
+            }
+            onChange={setSplitBy}
+            label={(value) => (value === 'none' ? 'No split' : `Split: ${GROUPING_LABELS[value]}`)}
+            ariaLabel="Split bars by"
+          />
+        </div>
+      }
+    >
+      <Async state={grouped.state} retry={grouped.retry} height="h-96">
+        {(data) => {
+          const splits = data.split_categories ?? [null]
+          const colors = data.split_by
+            ? groupColors(data.split_by, data.split_categories ?? [])
+            : {}
+          const thin = data.bars.filter((bar) => bar.thin).length
+          const pastWhisker = data.boxes.reduce((total, box) => total + box.whisker_outliers, 0)
+
+          return (
+            <div className="space-y-2">
+              <Plot
+                ariaLabel={`Mean ${columnLabel(data.measure)} by ${
+                  GROUPING_LABELS[data.group_by]
+                } with 95% confidence intervals`}
+                className="h-56 w-full"
+                data={splits.map((split) => {
+                  const cells = data.categories.map((group) =>
+                    data.bars.find((bar) => bar.group === group && bar.split === split),
+                  )
+                  return {
+                    type: 'bar' as const,
+                    name: split ?? columnLabel(data.measure),
+                    x: data.categories,
+                    y: cells.map((cell) => cell?.mean ?? null),
+                    marker: {
+                      color: split ? (colors[split] ?? INK.muted) : CATEGORICAL[0],
+                      // Thin cells fade: their interval is too wide to compare.
+                      opacity: cells.map((cell) => (cell?.thin ? 0.35 : 1)),
+                    },
+                    error_y: {
+                      type: 'data' as const,
+                      symmetric: false,
+                      array: cells.map((cell) =>
+                        cell?.ci_high != null && cell.mean != null ? cell.ci_high - cell.mean : 0,
+                      ),
+                      arrayminus: cells.map((cell) =>
+                        cell?.ci_low != null && cell.mean != null ? cell.mean - cell.ci_low : 0,
+                      ),
+                      color: INK.secondary,
+                      thickness: 1,
+                      width: 2,
+                    },
+                    customdata: cells.map((cell) => [cell?.n ?? 0, cell?.thin ? ' (thin)' : '']),
+                    hovertemplate: `%{x}${
+                      split ? ` · ${split}` : ''
+                    }<br>mean %{y:.1f}<br>n = %{customdata[0]}%{customdata[1]}<extra></extra>`,
+                  }
+                }) as never}
+                layout={baseLayout({
+                  barmode: 'group',
+                  bargap: 0.2,
+                  margin: { l: 56, r: 12, t: 8, b: data.split_by ? 64 : 40 },
+                  showlegend: Boolean(data.split_by),
+                  yaxis: {
+                    title: { text: axisTitle(data.measure), font: { color: INK.muted } },
+                    gridcolor: INK.grid,
+                    tickfont: { color: INK.muted },
+                    rangemode: 'tozero',
+                  },
+                  xaxis: { type: 'category', tickfont: { color: INK.muted } },
+                })}
+              />
+              <Plot
+                ariaLabel={`Boxplot of ${columnLabel(data.measure)} by ${
+                  GROUPING_LABELS[data.group_by]
+                }`}
+                className="h-56 w-full"
+                data={[
+                  // Plotly draws a box from precomputed quartiles, so the full
+                  // distribution never has to reach the browser.
+                  {
+                    type: 'box',
+                    name: columnLabel(data.measure),
+                    x: data.boxes.map((box) => box.group),
+                    q1: data.boxes.map((box) => box.q1),
+                    median: data.boxes.map((box) => box.median),
+                    q3: data.boxes.map((box) => box.q3),
+                    lowerfence: data.boxes.map((box) => box.lower_fence),
+                    upperfence: data.boxes.map((box) => box.upper_fence),
+                    mean: data.boxes.map((box) => box.mean),
+                    boxpoints: false,
+                    marker: { color: CATEGORICAL[0] },
+                    line: { color: CATEGORICAL[0], width: 1.2 },
+                    fillcolor: 'rgba(57,135,229,0.25)',
+                  } as never,
+                  {
+                    type: 'scatter',
+                    mode: 'markers',
+                    name: 'Past the whisker',
+                    x: data.boxes.flatMap((box) => box.outliers.map(() => box.group)),
+                    y: data.boxes.flatMap((box) => box.outliers),
+                    marker: { size: 5, symbol: 'circle-open', color: INK.secondary },
+                    hovertemplate: '%{x}<br>%{y:.1f}<extra>past the whisker</extra>',
+                  },
+                ]}
+                layout={baseLayout({
+                  margin: { l: 56, r: 12, t: 8, b: 40 },
+                  showlegend: false,
+                  yaxis: {
+                    title: { text: axisTitle(data.measure), font: { color: INK.muted } },
+                    gridcolor: INK.grid,
+                    tickfont: { color: INK.muted },
+                  },
+                  xaxis: { type: 'category', tickfont: { color: INK.muted } },
+                })}
+              />
+              <p className="text-xs tabular-nums text-slate-400">
+                n = {data.rows_used.toLocaleString()} · {pastWhisker.toLocaleString()} past a
+                whisker · {data.anomalies_in_rows.toLocaleString()} flagged by the quality engine
+                {thin > 0 &&
+                  ` · ${thin} faded bar${thin === 1 ? '' : 's'} with n < ${data.thin_threshold}`}
+              </p>
+            </div>
+          )
+        }}
+      </Async>
+    </Card>
+  )
+}
+
+/* --- 12.9 / VIZ-4: pair plot ---------------------------------------------- */
+
+function PairPlot() {
+  const [colorBy, setColorBy] = useState<Grouping>('pm25_band')
+  const pairs = useAsync(() => getPairPlot(colorBy), [colorBy])
+
+  return (
+    <Card
+      title="Pair plot"
+      subtitle="Every measurement against every other — the heatmap's cells, drawn"
+      note={pairs.state.status === 'ready' ? pairs.state.data.caveats.join(' ') : undefined}
+      actions={
+        <Select
+          value={colorBy}
+          options={GROUPINGS}
+          onChange={setColorBy}
+          label={(value) => `Colour: ${GROUPING_LABELS[value]}`}
+          ariaLabel="Colour pair plot by"
+        />
+      }
+    >
+      <Async state={pairs.state} retry={pairs.retry} height="h-[28rem]">
+        {(data) => {
+          const colors = groupColors(data.color_by, data.categories)
+          // splom names its axes x, x2, x3 … and y, y2, y3 …
+          const axis = (index: number) => (index === 0 ? '' : String(index + 1))
+          const axisStyle = {
+            gridcolor: INK.grid,
+            tickfont: { color: INK.muted, size: 9 },
+            zeroline: false,
+          }
+
+          return (
+            <div className="space-y-2">
+              <Plot
+                ariaLabel={`Pair plot of ${data.columns.length} measurements coloured by ${
+                  GROUPING_LABELS[data.color_by]
+                }`}
+                className="h-[28rem] w-full"
+                data={[
+                  {
+                    type: 'splom',
+                    dimensions: data.columns.map((column) => ({
+                      label: columnLabel(column),
+                      values: data.values[column],
+                    })),
+                    // The upper triangle repeats the lower, and each column's
+                    // histogram is already on the Distribution card.
+                    showupperhalf: false,
+                    diagonal: { visible: false },
+                    marker: {
+                      size: data.is_anomaly.map((flag) => (flag ? 6 : 3.5)),
+                      symbol: data.is_anomaly.map((flag) => (flag ? FLAGGED.symbol : 'circle')),
+                      color: data.is_anomaly.map((flag, index) =>
+                        flag ? FLAGGED.color : (colors[data.groups[index] ?? ''] ?? INK.muted),
+                      ),
+                      opacity: 0.7,
+                      line: { width: 0 },
+                    },
+                    text: data.groups.map((group) => group ?? ''),
+                    hovertemplate: '%{x:.1f}, %{y:.1f}<br>%{text}<extra></extra>',
+                  } as never,
+                ]}
+                layout={baseLayout({
+                  margin: { l: 64, r: 8, t: 8, b: 56 },
+                  showlegend: false,
+                  ...Object.fromEntries(
+                    data.columns.flatMap((_, index) => [
+                      [`xaxis${axis(index)}`, axisStyle],
+                      [`yaxis${axis(index)}`, axisStyle],
+                    ]),
+                  ),
+                  // Each panel carries its r, computed on every row — the same
+                  // number as the heatmap cell, so the two views cannot disagree.
+                  annotations: data.columns.flatMap((row, i) =>
+                    data.columns.slice(0, i).map((column, j) => ({
+                      xref: `x${axis(j)} domain` as never,
+                      yref: `y${axis(i)} domain` as never,
+                      x: 0.03,
+                      y: 0.97,
+                      xanchor: 'left' as const,
+                      yanchor: 'top' as const,
+                      showarrow: false,
+                      text: `r ${fixed(data.pearson[row]?.[column])}`,
+                      font: { size: 10, color: INK.primary },
+                      bgcolor: 'rgba(15,23,42,0.7)',
+                    })),
+                  ),
+                })}
+              />
+              <Legend colors={data.categories.map((name) => [name, colors[name] ?? INK.muted])} />
+              <p className="text-xs tabular-nums text-slate-400">
+                {data.points_returned.toLocaleString()} of {data.rows_used.toLocaleString()}{' '}
+                complete rows drawn{data.sampled ? ', sampled evenly' : ''} ·{' '}
+                {data.anomalies_in_points.toLocaleString()} flagged among them
+              </p>
+            </div>
+          )
+        }}
+      </Async>
+    </Card>
+  )
+}
+
+/* --- 12.9 / VIZ-5: Andrews curves ----------------------------------------- */
+
+function AndrewsCurves() {
+  const [classBy, setClassBy] = useState<AndrewsClassBy>('time_of_day')
+  const andrews = useAsync(() => getAndrews(classBy), [classBy])
+
+  return (
+    <Card
+      title="Andrews curves"
+      subtitle="Each hour's standardised readings as one curve; bold lines are class means"
+      note={andrews.state.status === 'ready' ? andrews.state.data.caveats.join(' ') : undefined}
+      actions={
+        <Select
+          value={classBy}
+          options={ANDREWS_CLASSES}
+          onChange={setClassBy}
+          label={(value) => `Class: ${GROUPING_LABELS[value]}`}
+          ariaLabel="Class Andrews curves by"
+        />
+      }
+    >
+      <Async state={andrews.state} retry={andrews.retry} height="h-[28rem]">
+        {(data) => {
+          const colors = groupColors(
+            data.class_by,
+            data.classes.map((entry) => entry.label),
+          )
+          // One trace per class for all its curves, joined by null breaks:
+          // sixty traces per class would swamp the legend and the redraw.
+          const joined = (curves: (number | null)[][]) => ({
+            x: curves.flatMap(() => [...data.t, null]),
+            y: curves.flatMap((curve) => [...curve, null]),
+          })
+
+          return (
+            <div className="space-y-2">
+              <Plot
+                ariaLabel={`Andrews curves classed by ${GROUPING_LABELS[data.class_by]}`}
+                className="h-[28rem] w-full"
+                data={data.classes.flatMap((entry) => {
+                  const color = colors[entry.label] ?? INK.muted
+                  const plain = entry.curves.filter((_, index) => !entry.is_anomaly[index])
+                  const flagged = entry.curves.filter((_, index) => entry.is_anomaly[index])
+                  return [
+                    {
+                      type: 'scatter' as const,
+                      mode: 'lines' as const,
+                      name: entry.label,
+                      legendgroup: entry.label,
+                      showlegend: false,
+                      ...joined(plain),
+                      line: { color, width: 0.8 },
+                      opacity: 0.25,
+                      hoverinfo: 'skip' as const,
+                    },
+                    {
+                      type: 'scatter' as const,
+                      mode: 'lines' as const,
+                      name: `${entry.label}, flagged`,
+                      legendgroup: entry.label,
+                      showlegend: false,
+                      ...joined(flagged),
+                      line: { color: FLAGGED.color, width: 1, dash: 'dot' as const },
+                      opacity: 0.7,
+                      hoverinfo: 'skip' as const,
+                    },
+                    {
+                      type: 'scatter' as const,
+                      mode: 'lines' as const,
+                      name: `${entry.label} (n = ${entry.n.toLocaleString()})`,
+                      legendgroup: entry.label,
+                      x: data.t,
+                      y: entry.mean_curve,
+                      line: { color, width: 3 },
+                      hovertemplate: `t = %{x:.2f}<br>f(t) = %{y:.2f}<extra>${entry.label} mean</extra>`,
+                    },
+                  ]
+                })}
+                layout={baseLayout({
+                  margin: { l: 48, r: 12, t: 8, b: 72 },
+                  xaxis: {
+                    title: { text: 't', font: { color: INK.muted } },
+                    gridcolor: INK.grid,
+                    tickfont: { color: INK.muted },
+                    tickvals: [-Math.PI, -Math.PI / 2, 0, Math.PI / 2, Math.PI],
+                    ticktext: ['−π', '−π/2', '0', 'π/2', 'π'],
+                  },
+                  yaxis: {
+                    title: { text: 'f(t), standardised', font: { color: INK.muted } },
+                    gridcolor: INK.grid,
+                    tickfont: { color: INK.muted },
+                  },
+                  legend: { orientation: 'h', y: -0.22, x: 0, font: { color: INK.secondary } },
+                })}
+              />
+              <p className="text-xs tabular-nums text-slate-400">
+                Column order {data.columns.map(columnLabel).join(' → ')} ·{' '}
+                {data.curves_returned.toLocaleString()} curves of{' '}
+                {data.rows_used.toLocaleString()} rows; means use every row · dotted{' '}
+                <span style={{ color: FLAGGED.color }}>orange</span> curves are flagged anomalies
+              </p>
+            </div>
+          )
+        }}
       </Async>
     </Card>
   )

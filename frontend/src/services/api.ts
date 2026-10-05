@@ -346,6 +346,152 @@ export function getDecomposition(
   return post<DecompositionResponse>('/eda/decompose', body)
 }
 
+// --- Visual EDA (Phase 12, VIZ-1 … VIZ-6) -----------------------------------
+
+export type Grouping =
+  | 'hour_of_day'
+  | 'time_of_day'
+  | 'day_of_week'
+  | 'is_weekend'
+  | 'month'
+  | 'station'
+  | 'pm25_band'
+
+export type AndrewsClassBy = 'time_of_day' | 'pm25_band' | 'is_weekend' | 'month'
+
+/** What every visual chart response carries besides the chart itself. */
+interface VisualProvenance {
+  caveats: string[]
+  cached: boolean
+  dataset_version: Record<string, unknown>
+  window: Record<string, unknown>
+}
+
+export interface ScatterResponse extends VisualProvenance {
+  x_column: string
+  y_column: string
+  color_by: Grouping | null
+  x: (number | null)[]
+  y: (number | null)[]
+  is_anomaly: boolean[]
+  groups: (string | null)[] | null
+  categories: string[] | null
+  slope: number | null
+  intercept: number | null
+  pearson: number | null
+  spearman: number | null
+  r_squared: number | null
+  line_x: (number | null)[]
+  line_y: (number | null)[]
+  n: number
+  rows_used: number
+  points_returned: number
+  sampled: boolean
+  anomalies_in_rows: number
+  anomalies_in_points: number
+}
+
+export function getScatter(body: {
+  x?: string
+  y?: string
+  color_by?: Grouping | null
+}): Promise<ScatterResponse> {
+  return post<ScatterResponse>('/eda/scatter', body)
+}
+
+export interface BarCell {
+  group: string
+  split: string | null
+  n: number
+  mean: number | null
+  sd: number | null
+  ci_low: number | null
+  ci_high: number | null
+  thin: boolean
+}
+
+export interface BoxSummary {
+  group: string
+  n: number
+  mean: number | null
+  q1: number | null
+  median: number | null
+  q3: number | null
+  lower_fence: number | null
+  upper_fence: number | null
+  whisker_outliers: number
+  outliers: (number | null)[]
+  anomalies_flagged: number
+}
+
+export interface GroupedResponse extends VisualProvenance {
+  measure: string
+  group_by: Grouping
+  split_by: Grouping | null
+  categories: string[]
+  split_categories: string[] | null
+  bars: BarCell[]
+  boxes: BoxSummary[]
+  rows_used: number
+  anomalies_in_rows: number
+  confidence: number
+  thin_threshold: number
+}
+
+export function getGrouped(body: {
+  measure?: string
+  group_by?: Grouping
+  split_by?: Grouping | null
+}): Promise<GroupedResponse> {
+  return post<GroupedResponse>('/eda/grouped', body)
+}
+
+export interface PairPlotResponse extends VisualProvenance {
+  columns: string[]
+  color_by: Grouping
+  values: Record<string, (number | null)[]>
+  bands: string[]
+  groups: (string | null)[]
+  categories: string[]
+  is_anomaly: boolean[]
+  pearson: Record<string, Record<string, number | null>>
+  rows_used: number
+  points_returned: number
+  sampled: boolean
+  anomalies_in_rows: number
+  anomalies_in_points: number
+}
+
+export function getPairPlot(colorBy: Grouping = 'pm25_band'): Promise<PairPlotResponse> {
+  return post<PairPlotResponse>('/eda/pairplot', { color_by: colorBy })
+}
+
+export interface AndrewsClass {
+  label: string
+  n: number
+  mean_curve: (number | null)[]
+  curves: (number | null)[][]
+  is_anomaly: boolean[]
+  anomalies_in_class: number
+  sampled: boolean
+}
+
+export interface AndrewsResponse extends VisualProvenance {
+  columns: string[]
+  class_by: AndrewsClassBy
+  t: (number | null)[]
+  classes: AndrewsClass[]
+  standardisation: Record<string, { mean: number | null; std: number | null }>
+  rows_used: number
+  curves_returned: number
+  sampled: boolean
+  anomalies_in_rows: number
+}
+
+export function getAndrews(classBy: AndrewsClassBy = 'time_of_day'): Promise<AndrewsResponse> {
+  return post<AndrewsResponse>('/eda/andrews', { class_by: classBy })
+}
+
 // --- ESI and projections (Phase 6) ------------------------------------------
 
 export interface ComponentLoadings {

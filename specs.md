@@ -149,6 +149,43 @@ Raw Data → Impute/Clean → Time-Aware Split → Feature Selection → Scale/E
 - Scalers fit **only** on the training set.
 - Lag features computed **before** splitting; target variable shifted correctly.
 
+### 6.4 Visual EDA — Bivariate & Multivariate Plots *(extension, Phase 12)*
+
+FEAT-02 reports *how strongly* each pair of columns moves together. It does not
+show the *shape* of that relationship, or how a measurement differs between
+groups. These five charts fill that gap. Each one is computed by the backend
+and drawn by the EDA Studio.
+
+| ID | Chart | Analysis | Answers |
+|----|-------|----------|---------|
+| **VIZ-1** | **Scatter plot** — any two measurements, with an OLS trend line, r, r² and n | Bivariate (numeric × numeric) | Is the relationship a line, a curve, or a cloud, and where are the outliers? |
+| **VIZ-2** | **Grouped bar chart** — mean of a measurement per group, split by an optional second grouping, with 95% confidence intervals | Bivariate / multivariate (numeric × category × category) | How does PM2.5 differ by district and time of day together? |
+| **VIZ-3** | **Grouped boxplot** — distribution of a measurement per group (hour of day, weekday, month, station, PM2.5 band) | Bivariate (numeric × category), outliers | Which hours or districts have the widest spread and the most extreme readings? |
+| **VIZ-4** | **Pair plot** — scatter matrix of every measurement against every other, coloured by PM2.5 band | Multivariate | Every pairwise relationship at once: the visual counterpart of the correlation heatmap |
+| **VIZ-5** | **Andrews curves** — each hour drawn as a Fourier curve over the standardised measurements, coloured by class | Multivariate | Do hours from different classes have different overall profiles? |
+
+**Groupings** available to VIZ-2 and VIZ-3: `hour_of_day`, `time_of_day`
+(night 00–05, morning 06–11, afternoon 12–17, evening 18–23), `day_of_week`,
+`is_weekend`, `month`, `station`, `pm25_band`. Times are in local time
+(IST), the same as the Phase 5 temporal features.
+
+**Rules that apply to all five (VIZ-6):**
+
+- **Scope first.** Each chart reads only the provenance chosen by
+  `ANALYTICS_SOURCE_SCOPE` (or by the `source_ids` in the request), the same
+  as every other EDA endpoint. Synthetic and measured rows are never pooled
+  without asking (ETH-1).
+- **Statistics on all rows, points from a sample.** r, means, quartiles and
+  confidence intervals are computed on every row. Only the points sent to the
+  browser are subsampled, evenly and deterministically, so the chart is the
+  same on every refresh. The payload says whether a sample was taken.
+- **Every number travels with its n.**
+- **Outliers stay visible.** Rows flagged `is_anomaly` are drawn and marked,
+  not dropped (AC-5).
+- **The caveat ships in the payload.** Association is not causation; an Andrews
+  curve depends on column order; a pair-plot sample is a sample.
+- **Offline.** Every chart renders from the demo dataset with no network (DR-1).
+
 ---
 
 ## 7. Core Feature Specifications
@@ -173,6 +210,10 @@ Raw Data → Impute/Clean → Time-Aware Split → Feature Selection → Scale/E
 | `GET` | `/data/sources` | List data sources and ingestion health. |
 | `POST` | `/eda/profile` | Generate univariate and bivariate statistics. |
 | `POST` | `/eda/reduce` | Perform dimensionality reduction (PCA). |
+| `POST` | `/eda/scatter` | Scatter points, trend line and r for two measurements (VIZ-1). *Extension.* |
+| `POST` | `/eda/grouped` | Grouped means with CIs and boxplot summaries for one measurement (VIZ-2, VIZ-3). *Extension.* |
+| `POST` | `/eda/pairplot` | Sampled scatter matrix of every measurement (VIZ-4). *Extension.* |
+| `POST` | `/eda/andrews` | Andrews curves per class (VIZ-5). *Extension.* |
 | `POST` | `/ml/predict` | Request a PM2.5 prediction. |
 
 **Example `POST /ml/predict` response:**
@@ -208,7 +249,7 @@ PostGIS extension required for spatial queries.
 | Screen | Requirements |
 |--------|--------------|
 | **Overview Dashboard** | Hero KPIs (current ESI, PM2.5); Leaflet map showing spatial pollution gradients; 24-hour prediction trendline. |
-| **EDA Studio** | Missingness matrix; Plotly histograms; interactive correlation heatmap; parallel coordinates; STL decomposition overlays. |
+| **EDA Studio** | Missingness matrix; Plotly histograms; interactive correlation heatmap; parallel coordinates; STL decomposition overlays. *Extension (§6.4):* scatter plot, grouped bar chart, grouped boxplot, pair plot, Andrews curves. |
 | **Model Lab** | Table of trained models; hyperparameter configurations; metrics; feature importance bar charts. |
 
 ---
@@ -243,9 +284,9 @@ PostGIS extension required for spatial queries.
 |--------|-------|-------------------------------|
 | **Mod 1** | Data Collection & Structure | Multi-source API & CSV ingestion, JSON validation, DB storage. |
 | **Mod 2** | Data Preprocessing | MICE imputation, Z-score / Isolation Forest anomaly detection, scaling. |
-| **Mod 3** | Descriptive Stats & Visualization | Automated EDA dashboard (histograms, boxplots, correlation heatmaps). |
+| **Mod 3** | Descriptive Stats & Visualization | Automated EDA dashboard (histograms, boxplots, correlation heatmaps); scatter plots, grouped bar charts and grouped boxplots for bivariate analysis (§6.4). |
 | **Mod 4** | Dimensionality & Time-Series | PCA for Environmental Stress Index, STL decomposition for temporal trends. |
-| **Mod 5** | Advanced Visualization | Parallel coordinates, missingness matrix, automated HTML/PDF reports. |
+| **Mod 5** | Advanced Visualization | Parallel coordinates, missingness matrix, automated HTML/PDF reports; pair plot and Andrews curves for multivariate analysis (§6.4). |
 
 ---
 
@@ -264,3 +305,4 @@ PostGIS extension required for spatial queries.
 | AC-9 | `POST /ml/predict` returns prediction, unit, confidence interval, and top features. |
 | AC-10 | All three frontend screens render with real backend data. |
 | AC-11 | The bias/causation disclaimer is visible in the UI. |
+| AC-12 | *(Extension, §6.4)* Each of the five Visual EDA charts is produced **offline** from the demo dataset, reports its sample size, keeps anomalies visible, and carries its caveat. |

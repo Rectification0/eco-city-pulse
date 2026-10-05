@@ -33,7 +33,9 @@ import numpy as np
 import pandas as pd
 
 from core.config import Settings, get_settings
+from core.exceptions import EcoCityPulseError
 from services.datasets import MEASUREMENT_COLUMNS, DatasetWindow
+from services.eda import visual
 from services.eda.cache import DatasetVersion
 from services.eda.decomposition import DecompositionResult
 from services.eda.profile import StatisticalProfile
@@ -65,6 +67,11 @@ COLUMN_UNITS: dict[str, str] = {
 }
 
 HISTOGRAM_BINS = 28
+
+# Marks in the report's scatter. Fewer than the EDA Studio's 2,000: the report
+# is a static file that gets emailed and printed, and 600 inline circles show
+# the shape of the cloud as well as 2,000 do at A4 width.
+REPORT_SCATTER_POINTS = 600
 
 # Diverging ramp for correlation: blue <-> red poles with a neutral grey
 # midpoint. Correlation has a sign, so a one-hue sequential ramp would hide the
@@ -346,6 +353,216 @@ def decomposition_chart(result: DecompositionResult) -> str:
     )
 
 
+def _ticks(low: float, high: float, count: int = 4) -> list[float]:
+    span = (high - low) or 1.0
+    return [low + span * index / count for index in range(count + 1)]
+
+
+def scatter_chart(result: visual.ScatterResult) -> str:
+    """VIZ-1 in the report: points, the OLS line, and flagged readings.
+
+    Flagged anomalies are drawn as crosses, not just in another colour, so the
+    distinction survives greyscale printing (AC-5: drawn, never dropped). The
+    axes span the line's end points as well as the sample, and those end points
+    are the extremes of *every* row, so sampling never cuts the line short.
+    """
+    width, height = 720, 300
+    left, right, top, bottom = 52, 12, 10, 40
+    plot_w, plot_h = width - left - right, height - top - bottom
+
+    xs = [*result.x, *result.line_x]
+    ys = [*result.y, *result.line_y]
+    x_low, x_high = min(xs), max(xs)
+    y_low, y_high = min(ys), max(ys)
+
+    def px(value: float) -> float:
+        return left + (value - x_low) / ((x_high - x_low) or 1.0) * plot_w
+
+    def py(value: float) -> float:
+        return top + plot_h - (value - y_low) / ((y_high - y_low) or 1.0) * plot_h
+
+    parts = []
+    for tick in _ticks(y_low, y_high):
+        parts.append(
+            f'<line class="grid" x1="{left}" y1="{py(tick):.1f}" x2="{width - right}" '
+            f'y2="{py(tick):.1f}"/>'
+            f'<text class="tick" x="{left - 6}" y="{py(tick):.1f}" text-anchor="end" '
+            f'dominant-baseline="central">{_fmt(tick, 0)}</text>'
+        )
+    for tick in _ticks(x_low, x_high):
+        parts.append(
+            f'<text class="tick" x="{px(tick):.1f}" y="{height - bottom + 14}" '
+            f'text-anchor="middle">{_fmt(tick, 0)}</text>'
+        )
+
+    marks = list(zip(result.x, result.y, result.is_anomaly, strict=True))
+    for x, y, flagged in marks:
+        if not flagged:
+            parts.append(f'<circle class="pt" cx="{px(x):.1f}" cy="{py(y):.1f}" r="2"/>')
+    # Flagged points last, so no ordinary point is drawn over one.
+    for x, y, flagged in marks:
+        if flagged:
+            cx, cy = px(x), py(y)
+            parts.append(
+                f'<path class="flag" d="M{cx - 3:.1f},{cy - 3:.1f} L{cx + 3:.1f},{cy + 3:.1f} '
+                f'M{cx - 3:.1f},{cy + 3:.1f} L{cx + 3:.1f},{cy - 3:.1f}"/>'
+            )
+
+    if len(result.line_x) == 2:
+        parts.append(
+            f'<line class="fit" x1="{px(result.line_x[0]):.1f}" '
+            f'y1="{py(result.line_y[0]):.1f}" x2="{px(result.line_x[1]):.1f}" '
+            f'y2="{py(result.line_y[1]):.1f}"/>'
+        )
+
+    x_name = f"{_label(result.x_column)} ({_unit(result.x_column)})"
+    y_name = f"{_label(result.y_column)} ({_unit(result.y_column)})"
+    middle = top + plot_h / 2
+    parts.append(
+        f'<text class="cat" x="{left + plot_w / 2}" y="{height - 6}" '
+        f'text-anchor="middle">{_esc(x_name)}</text>'
+        f'<text class="cat" x="12" y="{middle}" text-anchor="middle" '
+        f'transform="rotate(-90 12 {middle})">{_esc(y_name)}</text>'
+    )
+
+    return (
+        f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Scatter of {_esc(_label(result.y_column))} against '
+        f'{_esc(_label(result.x_column))} with a least-squares line">'
+        f'{"".join(parts)}</svg>'
+    )
+
+
+def grouped_boxplot(result: visual.GroupedResult) -> str:
+    """VIZ-3 in the report: one box per group on a shared axis.
+
+    Shared, because comparing the groups is the point; a box per panel with
+    its own scale would make every hour look equally spread. The y range
+    includes the shipped outliers, so an extreme reading is on the chart rather
+    than clipped off the top of it.
+    """
+    boxes = result.boxes
+    if not boxes:
+        return "<p class='empty'>No groups to plot.</p>"
+
+    width, height = 720, 280
+    left, right, top, bottom = 52, 12, 10, 40
+    plot_w, plot_h = width - left - right, height - top - bottom
+    slot = plot_w / len(boxes)
+    box_w = max(4.0, slot * 0.55)
+
+    values = [v for box in boxes for v in (box.lower_fence, box.upper_fence, *box.outliers)]
+    low, high = min(values), max(values)
+
+    def py(value: float) -> float:
+        return top + plot_h - (value - low) / ((high - low) or 1.0) * plot_h
+
+    parts = []
+    for tick in _ticks(low, high):
+        parts.append(
+            f'<line class="grid" x1="{left}" y1="{py(tick):.1f}" x2="{width - right}" '
+            f'y2="{py(tick):.1f}"/>'
+            f'<text class="tick" x="{left - 6}" y="{py(tick):.1f}" text-anchor="end" '
+            f'dominant-baseline="central">{_fmt(tick, 0)}</text>'
+        )
+
+    # Every group labelled when they fit; every third when there are 24 hours.
+    every = 1 if len(boxes) <= 12 else 3
+    for index, box in enumerate(boxes):
+        cx = left + slot * index + slot / 2
+        x0 = cx - box_w / 2
+        parts.append(
+            f'<line class="whisker" x1="{cx:.1f}" y1="{py(box.upper_fence):.1f}" '
+            f'x2="{cx:.1f}" y2="{py(box.q3):.1f}"/>'
+            f'<line class="whisker" x1="{cx:.1f}" y1="{py(box.q1):.1f}" '
+            f'x2="{cx:.1f}" y2="{py(box.lower_fence):.1f}"/>'
+            f'<rect class="box" x="{x0:.1f}" y="{py(box.q3):.1f}" width="{box_w:.1f}" '
+            f'height="{max(1.0, py(box.q1) - py(box.q3)):.1f}" rx="2"/>'
+            f'<line class="median" x1="{x0:.1f}" y1="{py(box.median):.1f}" '
+            f'x2="{x0 + box_w:.1f}" y2="{py(box.median):.1f}"/>'
+        )
+        parts.extend(
+            f'<circle class="out" cx="{cx:.1f}" cy="{py(value):.1f}" r="2.2"/>'
+            for value in box.outliers
+        )
+        if index % every == 0:
+            parts.append(
+                f'<text class="tick" x="{cx:.1f}" y="{height - bottom + 14}" '
+                f'text-anchor="middle">{_esc(box.group)}</text>'
+            )
+
+    grouping = result.group_by.replace("_", " ")
+    y_name = f"{_label(result.measure)} ({_unit(result.measure)})"
+    middle = top + plot_h / 2
+    parts.append(
+        f'<text class="cat" x="{left + plot_w / 2}" y="{height - 6}" '
+        f'text-anchor="middle">{_esc(grouping)} (IST)</text>'
+        f'<text class="cat" x="12" y="{middle}" text-anchor="middle" '
+        f'transform="rotate(-90 12 {middle})">{_esc(y_name)}</text>'
+    )
+
+    return (
+        f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="Boxplot of {_esc(_label(result.measure))} by {_esc(grouping)}">'
+        f'{"".join(parts)}</svg>'
+    )
+
+
+def bivariate_section(frame: pd.DataFrame) -> tuple[str, bool]:
+    """The report's Visual EDA section (task 12.10), and whether it rendered.
+
+    Computed by ``visual`` — the functions behind ``/eda/scatter`` and
+    ``/eda/grouped`` — so the report and the EDA Studio print the same r and
+    the same quartiles. A slice too thin for either chart gets a note rather
+    than failing the whole report, for the same reason the STL section does.
+    """
+    try:
+        points = visual.scatter(
+            frame, "traffic_score", "pm25", max_points=REPORT_SCATTER_POINTS
+        )
+        boxes = visual.grouped(frame, "pm25", "hour_of_day")
+    except EcoCityPulseError as exc:
+        note = f"""
+  <section>
+    <h2>Bivariate analysis</h2>
+    <p class="caveat">Not included: {_esc(exc)}</p>
+  </section>"""
+        return note, False
+
+    if points.sampled:
+        shown = (
+            f"Showing {points.points_returned:,} of {points.rows_used:,} points, "
+            "sampled evenly; the line and coefficients use every row."
+        )
+    else:
+        shown = f"All {points.rows_used:,} points shown."
+    whiskers = sum(box.whisker_outliers for box in boxes.boxes)
+
+    section = f"""
+  <section>
+    <h2>Bivariate analysis</h2>
+    <p class="section-note">
+      PM2.5 against traffic. Least-squares slope {_fmt(points.slope, 3)} µg/m³
+      per index point, Pearson r {_fmt(points.pearson, 3)}, Spearman ρ
+      {_fmt(points.spearman, 3)}, r² {_fmt(points.r_squared, 3)},
+      n = {points.rows_used:,}. {_esc(shown)} The {points.anomalies_in_rows:,}
+      flagged readings are drawn as crosses, not removed.
+    </p>
+    {scatter_chart(points)}
+    <h3 style="margin-top:20px">PM2.5 by hour of day</h3>
+    <p class="section-note">
+      Box from Q1 to Q3 with the median marked; whiskers reach the furthest
+      reading within 1.5 × IQR. {whiskers:,} readings sit past a whisker and
+      {boxes.anomalies_in_rows:,} are flagged by the quality engine. They are
+      different tests, so the counts differ. n = {boxes.rows_used:,}.
+    </p>
+    {grouped_boxplot(boxes)}
+    <p class="caveat">{_esc(visual.SCATTER_CAVEAT)}</p>
+    <p class="caveat">{_esc(visual.GROUPED_CAVEAT)}</p>
+  </section>"""
+    return section, True
+
+
 # --- Document ---------------------------------------------------------------
 
 STYLES = """
@@ -456,6 +673,14 @@ tbody tr:last-child td { border-bottom: none; }
 .chart .legend { font-size: 11px; }
 .chart .key.observed, .chart .key.seasonal, .chart .key.residual { fill: var(--series-1); }
 .chart .key.trend { fill: var(--series-2); }
+.chart .grid { stroke: var(--grid); stroke-width: 1; }
+.chart .pt { fill: var(--series-1); fill-opacity: 0.45; }
+.chart .flag { stroke: var(--series-2); stroke-width: 1.6; fill: none; }
+.chart .fit { stroke: var(--text-primary); stroke-width: 2; }
+.chart .box { fill: var(--series-1); fill-opacity: 0.3; stroke: var(--series-1); stroke-width: 1.2; }
+.chart .median { stroke: var(--text-primary); stroke-width: 2; }
+.chart .whisker { stroke: var(--text-secondary); stroke-width: 1; }
+.chart .out { fill: none; stroke: var(--text-muted); stroke-width: 1; }
 .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
   border: 1px solid var(--border); color: var(--text-secondary); background: var(--surface-2); }
 .caveat {
@@ -600,6 +825,10 @@ def render(
     <p class="caveat">Not included: {_esc(decomposition_note)}</p>
   </section>"""
 
+    bivariate, rendered = bivariate_section(frame)
+    if rendered:
+        sections.append("bivariate")
+
     caveats = "".join(f"<p class='caveat'>{_esc(c)}</p>" for c in statistics.caveats)
 
     document = f"""<!DOCTYPE html>
@@ -664,6 +893,7 @@ def render(
     <div style="margin-top:18px">{_correlation_table(statistics)}</div>
     {caveats}
   </section>
+{bivariate}
 {stl_section}
 
   <section>
@@ -724,15 +954,19 @@ def to_pdf(document: str, destination: Path) -> Path:
 
 __all__ = [
     "COLUMN_LABELS",
-    "ETHICS_DISCLAIMER",
-    "STRONG_CORRELATION",
     "COLUMN_UNITS",
+    "ETHICS_DISCLAIMER",
     "REPORT_FILENAME",
+    "REPORT_SCATTER_POINTS",
+    "STRONG_CORRELATION",
     "ReportResult",
+    "bivariate_section",
     "correlation_heatmap",
     "decomposition_chart",
+    "grouped_boxplot",
     "histogram",
     "missingness_chart",
     "render",
+    "scatter_chart",
     "to_pdf",
 ]

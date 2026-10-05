@@ -1,4 +1,4 @@
-"""EDA routes — FEAT-02 and FEAT-04 (tasks 4.3, 4.5, 4.7, 6.4, 6.5).
+"""EDA routes — FEAT-02, FEAT-04 and VIZ-1 … VIZ-6 (tasks 4.3–6.5, 12.8).
 
 Per design §5 these handlers hold no statistics. They validate the request,
 call ``services.eda``, and shape the response.
@@ -23,16 +23,18 @@ from pydantic import BaseModel, Field, model_validator
 from api.dependencies import SessionDep, SettingsDep
 from core.exceptions import InsufficientDataError
 from services.datasets import MEASUREMENT_COLUMNS
-from services.eda import cache, decomposition, manifold, service
+from services.eda import cache, decomposition, manifold, service, visual
 
 router = APIRouter(prefix="/eda", tags=["eda"])
 
 
-class DatasetSelector(BaseModel):
-    """Which slice of ``observations`` to analyse (SEC-1).
+class ScopeSelector(BaseModel):
+    """Which rows of ``observations`` to read (SEC-1).
 
-    Every field optional: the default is "everything", which is what an analyst
-    opening the EDA Studio for the first time wants.
+    Every field optional: the default is "everything the configured scope
+    allows", which is what an analyst opening the EDA Studio wants. Shared by
+    every EDA request, so a chart cannot quietly accept a narrower notion of
+    scope than the profile beside it.
     """
 
     source_ids: list[int] | None = Field(
@@ -44,10 +46,6 @@ class DatasetSelector(BaseModel):
     end: datetime | None = Field(
         default=None, description="Inclusive upper bound on the observation timestamp."
     )
-    columns: list[str] | None = Field(
-        default=None,
-        description=f"Numeric columns to profile. Defaults to {list(MEASUREMENT_COLUMNS)}.",
-    )
     use_cache: bool = Field(
         default=True,
         description=(
@@ -57,10 +55,22 @@ class DatasetSelector(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_window(self) -> DatasetSelector:
+    def _check_window(self) -> ScopeSelector:
         if self.start and self.end and self.start > self.end:
             raise ValueError("start must not be after end")
         return self
+
+    def source_tuple(self) -> tuple[int, ...] | None:
+        return tuple(self.source_ids) if self.source_ids else None
+
+
+class DatasetSelector(ScopeSelector):
+    """A scope plus the numeric columns to analyse."""
+
+    columns: list[str] | None = Field(
+        default=None,
+        description=f"Numeric columns to profile. Defaults to {list(MEASUREMENT_COLUMNS)}.",
+    )
 
     @model_validator(mode="after")
     def _check_columns(self) -> DatasetSelector:
@@ -74,9 +84,6 @@ class DatasetSelector(BaseModel):
 
     def resolved_columns(self) -> tuple[str, ...]:
         return tuple(self.columns) if self.columns else MEASUREMENT_COLUMNS
-
-    def source_tuple(self) -> tuple[int, ...] | None:
-        return tuple(self.source_ids) if self.source_ids else None
 
 
 # --- Response models (SEC-1) ------------------------------------------------
@@ -466,6 +473,312 @@ async def tsne(
     )
 
 
+# --- Visual EDA — VIZ-1 … VIZ-6 (tasks 12.3–12.8) --------------------------
+#
+# Validation lives here, on the request models, so an unknown column or
+# grouping is a 422 naming what *is* available before any query runs. The
+# service functions check the same names again: they are callable from scripts
+# and the report too, and a misspelt column there should fail as loudly.
+
+
+def _measurement(value: str, role: str) -> str:
+    if value not in MEASUREMENT_COLUMNS:
+        raise ValueError(
+            f"unknown {role} {value!r}; available: {list(MEASUREMENT_COLUMNS)}"
+        )
+    return value
+
+
+def _grouping(
+    value: str | None, role: str, allowed: tuple[str, ...] = visual.GROUPINGS
+) -> str | None:
+    if value is not None and value not in allowed:
+        raise ValueError(f"unknown {role} {value!r}; available: {list(allowed)}")
+    return value
+
+
+class VisualProvenance(BaseModel):
+    """What every visual chart response carries besides the chart itself."""
+
+    caveats: list[str] = Field(
+        description="ETH-1 first (association is not causation), then the chart's own."
+    )
+    cached: bool
+    dataset_version: dict[str, Any]
+    window: dict[str, Any] = Field(
+        description="The slice actually read, after the source scope was resolved."
+    )
+
+
+class ScatterRequest(ScopeSelector):
+    x: str = Field(default="traffic_score", description="Measurement on the x axis.")
+    y: str = Field(default="pm25", description="Measurement on the y axis.")
+    color_by: str | None = Field(
+        default=None, description=f"Optional grouping: one of {list(visual.GROUPINGS)}."
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> ScatterRequest:
+        _measurement(self.x, "x")
+        _measurement(self.y, "y")
+        if self.x == self.y:
+            raise ValueError("x and y must be different columns")
+        _grouping(self.color_by, "color_by")
+        return self
+
+
+class ScatterResponse(VisualProvenance):
+    """VIZ-1. Points are a sample; the fit and coefficients use every row."""
+
+    x_column: str
+    y_column: str
+    color_by: str | None
+    x: list[float | None]
+    y: list[float | None]
+    is_anomaly: list[bool]
+    groups: list[str | None] | None
+    categories: list[str] | None
+    slope: float | None
+    intercept: float | None
+    pearson: float | None = Field(description="Equal to the /eda/profile cell for this pair.")
+    spearman: float | None
+    r_squared: float | None
+    line_x: list[float | None] = Field(description="OLS line end points, x.")
+    line_y: list[float | None] = Field(description="OLS line end points, y.")
+    n: int
+    rows_used: int
+    points_returned: int
+    sampled: bool
+    anomalies_in_rows: int
+    anomalies_in_points: int
+
+
+class GroupedRequest(ScopeSelector):
+    measure: str = Field(default="pm25", description="Measurement to summarise.")
+    group_by: str = Field(
+        default="hour_of_day", description=f"One of {list(visual.GROUPINGS)}."
+    )
+    split_by: str | None = Field(
+        default=None,
+        description="Optional second grouping for the bar chart; must differ from group_by.",
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> GroupedRequest:
+        _measurement(self.measure, "measure")
+        _grouping(self.group_by, "group_by")
+        _grouping(self.split_by, "split_by")
+        if self.split_by is not None and self.split_by == self.group_by:
+            raise ValueError("split_by must differ from group_by")
+        return self
+
+
+class BarCellResponse(BaseModel):
+    group: str
+    split: str | None
+    n: int
+    mean: float | None
+    sd: float | None
+    ci_low: float | None
+    ci_high: float | None
+    thin: bool = Field(description="n below the thin threshold: compare with care.")
+
+
+class BoxSummaryResponse(BaseModel):
+    group: str
+    n: int
+    mean: float | None
+    q1: float | None
+    median: float | None
+    q3: float | None
+    lower_fence: float | None
+    upper_fence: float | None
+    whisker_outliers: int = Field(description="Values past the whiskers, all of them.")
+    outliers: list[float | None] = Field(description="The most extreme of them, capped.")
+    anomalies_flagged: int = Field(
+        description="Rows the quality engine flagged — a different test from the whiskers."
+    )
+
+
+class GroupedResponse(VisualProvenance):
+    """VIZ-2 (bars, by group × split) and VIZ-3 (boxes, by group)."""
+
+    measure: str
+    group_by: str
+    split_by: str | None
+    categories: list[str]
+    split_categories: list[str] | None
+    bars: list[BarCellResponse]
+    boxes: list[BoxSummaryResponse]
+    rows_used: int
+    anomalies_in_rows: int
+    confidence: float
+    thin_threshold: int
+
+
+class PairPlotRequest(ScopeSelector):
+    color_by: str = Field(
+        default="pm25_band", description=f"One of {list(visual.GROUPINGS)}."
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> PairPlotRequest:
+        _grouping(self.color_by, "color_by")
+        return self
+
+
+class PairPlotResponse(VisualProvenance):
+    """VIZ-4. A sample of complete rows; r over every row in scope."""
+
+    columns: list[str]
+    color_by: str
+    values: dict[str, list[float | None]]
+    bands: list[str]
+    groups: list[str | None]
+    categories: list[str]
+    is_anomaly: list[bool]
+    pearson: dict[str, dict[str, float | None]]
+    rows_used: int
+    points_returned: int
+    sampled: bool
+    anomalies_in_rows: int
+    anomalies_in_points: int
+
+
+class AndrewsRequest(ScopeSelector):
+    class_by: str = Field(
+        default="time_of_day", description=f"One of {list(visual.ANDREWS_CLASSES)}."
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> AndrewsRequest:
+        _grouping(self.class_by, "class_by", visual.ANDREWS_CLASSES)
+        return self
+
+
+class AndrewsClassResponse(BaseModel):
+    label: str
+    n: int
+    mean_curve: list[float | None] = Field(
+        description="Exact: the curve of the class's mean row, over every row."
+    )
+    curves: list[list[float | None]]
+    is_anomaly: list[bool]
+    anomalies_in_class: int
+    sampled: bool
+
+
+class StandardisationResponse(BaseModel):
+    mean: float | None
+    std: float | None
+
+
+class AndrewsResponse(VisualProvenance):
+    """VIZ-5. Column order is fixed and returned, because it shapes the curves."""
+
+    columns: list[str]
+    class_by: str
+    t: list[float | None]
+    classes: list[AndrewsClassResponse]
+    standardisation: dict[str, StandardisationResponse]
+    rows_used: int
+    curves_returned: int
+    sampled: bool
+    anomalies_in_rows: int
+
+
+@router.post(
+    "/scatter",
+    response_model=ScatterResponse,
+    summary="Scatter plot of two measurements with OLS line and r (VIZ-1)",
+)
+async def scatter(
+    session: SessionDep, settings: SettingsDep, request: ScatterRequest | None = None
+) -> ScatterResponse:
+    """VIZ-1 (task 12.3). 422 when fewer than three rows hold both columns."""
+    request = request or ScatterRequest()
+    result = service.scatter_plot(
+        session,
+        settings,
+        x=request.x,
+        y=request.y,
+        color_by=request.color_by,
+        source_ids=request.source_tuple(),
+        start=request.start,
+        end=request.end,
+        use_cache=request.use_cache,
+    )
+    return ScatterResponse.model_validate(result.as_dict())
+
+
+@router.post(
+    "/grouped",
+    response_model=GroupedResponse,
+    summary="Grouped means with 95% CIs and boxplot summaries (VIZ-2, VIZ-3)",
+)
+async def grouped(
+    session: SessionDep, settings: SettingsDep, request: GroupedRequest | None = None
+) -> GroupedResponse:
+    """VIZ-2 and VIZ-3 (task 12.4), from one ``groupby``."""
+    request = request or GroupedRequest()
+    result = service.grouped_summary(
+        session,
+        settings,
+        measure=request.measure,
+        group_by=request.group_by,
+        split_by=request.split_by,
+        source_ids=request.source_tuple(),
+        start=request.start,
+        end=request.end,
+        use_cache=request.use_cache,
+    )
+    return GroupedResponse.model_validate(result.as_dict())
+
+
+@router.post(
+    "/pairplot",
+    response_model=PairPlotResponse,
+    summary="Sampled scatter matrix of every measurement (VIZ-4)",
+)
+async def pairplot(
+    session: SessionDep, settings: SettingsDep, request: PairPlotRequest | None = None
+) -> PairPlotResponse:
+    """VIZ-4 (task 12.5). At most 1,500 evenly sampled complete rows."""
+    request = request or PairPlotRequest()
+    result = service.pair_plot(
+        session,
+        settings,
+        color_by=request.color_by,
+        source_ids=request.source_tuple(),
+        start=request.start,
+        end=request.end,
+        use_cache=request.use_cache,
+    )
+    return PairPlotResponse.model_validate(result.as_dict())
+
+
+@router.post(
+    "/andrews",
+    response_model=AndrewsResponse,
+    summary="Andrews curves per class, with exact mean curves (VIZ-5)",
+)
+async def andrews(
+    session: SessionDep, settings: SettingsDep, request: AndrewsRequest | None = None
+) -> AndrewsResponse:
+    """VIZ-5 (task 12.6). Standardised, fixed column order, ≤ 60 curves per class."""
+    request = request or AndrewsRequest()
+    result = service.andrews_curves(
+        session,
+        settings,
+        class_by=request.class_by,
+        source_ids=request.source_tuple(),
+        start=request.start,
+        end=request.end,
+        use_cache=request.use_cache,
+    )
+    return AndrewsResponse.model_validate(result.as_dict())
+
+
 class CacheStatsResponse(BaseModel):
     entries: int
     hits: int
@@ -485,13 +798,22 @@ async def cache_stats() -> CacheStatsResponse:
 
 
 __all__ = [
+    "AndrewsRequest",
+    "AndrewsResponse",
     "DatasetSelector",
     "DecompositionRequest",
+    "GroupedRequest",
+    "GroupedResponse",
     "InsufficientDataError",
+    "PairPlotRequest",
+    "PairPlotResponse",
     "ProfileResponse",
     "ProjectionRequest",
     "ProjectionResponse",
     "ReductionRequest",
     "ReductionResponse",
+    "ScatterRequest",
+    "ScatterResponse",
+    "ScopeSelector",
     "router",
 ]

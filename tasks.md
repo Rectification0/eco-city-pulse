@@ -227,6 +227,32 @@
 
 ---
 
+## Phase 12 — Visual EDA: Bivariate & Multivariate Plots *(extension)*
+
+Requirements in specs §6.4, design in design §12.1. Adds the scatter plot,
+grouped bar chart, grouped boxplot, pair plot and Andrews curves to the EDA
+Studio, computed by the backend from the scoped dataset.
+
+| # | Task | Traces | Pri | Status |
+|---|------|--------|-----|--------|
+| 12.1 | `services/eda/bands.py` — CPCB PM2.5 bands as the backend's single definition; drift test against `frontend/src/charts/theme.ts` | VIZ-6 | M | [x] |
+| 12.2 | Grouping derivation — `hour_of_day`, `time_of_day`, `day_of_week`, `is_weekend`, `month`, `station`, `pm25_band`, reusing `features/temporal.py` (IST) | VIZ-2, VIZ-3, VIZ-6 | M | [x] |
+| 12.3 | `services/eda/visual.py` — **scatter**: OLS line, Pearson r, Spearman ρ, r², n on all rows; ≤ 2,000 evenly sampled points with `is_anomaly` | VIZ-1 | M | [x] |
+| 12.4 | `visual.py` — **grouped**: per-cell mean, sd, n, t-based 95% CI, `thin` flag (n < 30); per-group box summary (q1, median, q3, fences, outlier count, ≤ 50 extreme values) | VIZ-2, VIZ-3 | M | [x] |
+| 12.5 | `visual.py` — **pair plot**: ≤ 1,500 evenly sampled rows of every measurement with band and `is_anomaly` | VIZ-4 | M | [x] |
+| 12.6 | `visual.py` — **Andrews curves**: z-scored, fixed column order, 128-point `t` grid, ≤ 60 curves per class sampled within class, exact per-class mean curves | VIZ-5 | M | [x] |
+| 12.7 | Service functions — `resolve_source_ids` first, profile cache keyed on version + scope + params, caveats attached | VIZ-6, ETH-1 | M | [x] |
+| 12.8 | `POST /eda/scatter`, `/eda/grouped`, `/eda/pairplot`, `/eda/andrews` — Pydantic request/response, validation of column and grouping names | SEC-1, specs §8 | M | [x] |
+| 12.9 | **EDA Studio** — Bivariate card (scatter, grouped bars, grouped boxplot) and Pair plot / Andrews curves cards, with selectors, `ariaLabel`, loading/empty/error states | specs §10, Mod 3, Mod 5 | M | [x] |
+| 12.10 | HTML EDA report — add a scatter (PM2.5 vs traffic) and a grouped boxplot (PM2.5 by hour) as inline SVG | Mod 5 | S | [x] |
+| 12.11 | Tests — known-fixture statistics (OLS, CI, quartiles, Andrews mean = curve of mean), deterministic sampling, scatter r equals the profile cell, anomalies retained, scope respected | VIZ-1 … VIZ-6 | M | [x] |
+| 12.12 | Acceptance test **AC-12**, offline: each chart builds from the demo dataset with n, anomalies and caveat | AC-12, DR-1 | M | [x] |
+
+**Exit criteria:** all five charts render in the EDA Studio from real backend
+data, and AC-12 passes with no database or network. *(AC-12)*
+
+---
+
 ## Dependency Order
 
 ```
@@ -238,6 +264,8 @@ Phase 0 ─► Phase 1 ─► Phase 2 ─► Phase 3 ─► Phase 4
 Phase 10 (frontend) ◄────── needs Phase 2/4/6/7/9 endpoints ─────────────────────┘
                                                                                  ▼
                                                                           Phase 11
+                                                                                 │
+Phase 4 (EDA) + Phase 5 (temporal features) ─────────────────────────────► Phase 12
 ```
 
 Phase 10 can begin against mocked API responses as soon as the Phase 0 scaffold exists, then switch to live endpoints as each backend phase lands.
@@ -257,5 +285,7 @@ Phase 10 can begin against mocked API responses as soon as the Phase 0 scaffold 
 | DR-1 … DR-4 (harmonization) | Phase 2 |
 | SEC-1 … SEC-3, PRIV, ETH | Phase 0.5–0.6, Phase 10.16, Phase 11 |
 | OBJ-5 Leakage prevention / MLOps | Phase 7.2, 7.3, 7.10, 7.13 |
-| BACSE301 Mod 1–5 | Phases 2, 3, 4, 6, 10 |
+| BACSE301 Mod 1–5 | Phases 2, 3, 4, 6, 10, 12 |
+| VIZ-1 … VIZ-6 Visual EDA | Phase 12 |
 | AC-1 … AC-11 | Phase exit criteria + Phase 11.8 |
+| AC-12 | Phase 12.12 |

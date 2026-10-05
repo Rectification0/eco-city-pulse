@@ -1,4 +1,4 @@
-"""EDA endpoints (tasks 4.3, 4.5, 4.7, 6.4, 6.5).
+"""EDA endpoints (tasks 4.3, 4.5, 4.7, 6.4, 6.5, 12.8).
 
 Against a real database inside a rolled-back transaction, because the contract
 worth checking -- that AC-3's four statistics reach the caller for every
@@ -482,3 +482,88 @@ def test_every_phase_six_route_is_documented(
 
     assert "/api/v1/eda/reduce" in paths
     assert "/api/v1/eda/tsne" in paths
+
+
+# --- Visual EDA, VIZ-1 … VIZ-6 (task 12.8) ----------------------------------
+
+
+def test_the_scatter_reports_its_fit_and_sample_size(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    """Every 50th hour has no PM2.5, so n is the rows holding both columns."""
+    body = db_client.post(
+        _url(db_settings, "/eda/scatter"),
+        json={"source_ids": [seeded.id], "x": "traffic_score", "y": "pm25"},
+    ).json()
+
+    missing_pm25 = len(range(0, 24 * 12, 50))
+    assert body["n"] == body["rows_used"] == 24 * 12 - missing_pm25
+    assert body["points_returned"] == len(body["x"]) == len(body["is_anomaly"])
+    assert len(body["line_x"]) == 2
+    assert "causation" in body["caveats"][0].lower()
+
+
+def test_the_scatter_r_matches_the_profile_cell_over_http(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    payload = {"source_ids": [seeded.id]}
+    profile = db_client.post(_url(db_settings, "/eda/profile"), json=payload).json()
+    scatter = db_client.post(
+        _url(db_settings, "/eda/scatter"), json={**payload, "x": "pm10", "y": "pm25"}
+    ).json()
+
+    assert scatter["pearson"] == profile["bivariate"]["pearson"]["pm10"]["pm25"]
+
+
+def test_grouped_by_hour_returns_a_bar_and_a_box_per_local_hour(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    body = db_client.post(
+        _url(db_settings, "/eda/grouped"),
+        json={"source_ids": [seeded.id], "measure": "pm25", "group_by": "hour_of_day"},
+    ).json()
+
+    assert len(body["categories"]) == 24
+    assert len(body["bars"]) == len(body["boxes"]) == 24
+    assert all(bar["ci_low"] <= bar["mean"] <= bar["ci_high"] for bar in body["bars"])
+
+
+def test_the_pair_plot_and_andrews_curves_answer_with_no_body(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    for path in ("/eda/pairplot", "/eda/andrews"):
+        response = db_client.post(_url(db_settings, path))
+        assert response.status_code == 200, path
+        assert response.json()["rows_used"] > 0
+
+
+def test_a_chart_reads_only_the_sources_it_was_asked_for(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    """Scope respected end to end: the window names the requested source and
+    the row count is that source's, not the table's."""
+    body = db_client.post(
+        _url(db_settings, "/eda/andrews"), json={"source_ids": [seeded.id]}
+    ).json()
+
+    assert body["window"]["source_ids"] == [seeded.id]
+    assert body["window"]["rows"] == 24 * 12
+    assert body["dataset_version"]["rows"] == 24 * 12
+
+
+def test_an_unknown_chart_column_is_a_422_naming_the_alternatives(
+    db_client: TestClient, db_settings: Settings, seeded: DataSource
+) -> None:
+    response = db_client.post(_url(db_settings, "/eda/scatter"), json={"x": "so2"})
+
+    assert response.status_code == 422
+    assert "pm25" in response.text
+
+
+def test_every_phase_twelve_route_is_documented(
+    db_client: TestClient, db_settings: Settings
+) -> None:
+    paths = db_client.get("/openapi.json").json()["paths"]
+
+    for path in ("/eda/scatter", "/eda/grouped", "/eda/pairplot", "/eda/andrews"):
+        assert f"/api/v1{path}" in paths

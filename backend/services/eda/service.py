@@ -1,4 +1,4 @@
-"""EDA service entry points (tasks 4.3, 4.6, 6.4, 6.5).
+"""EDA service entry points (tasks 4.3, 4.6, 6.4, 6.5, 12.7).
 
 What the routes call. Each function does the same three things: fingerprint the
 slice, consult the cache, compute only on a miss. The fingerprint is taken
@@ -13,6 +13,7 @@ broken, and both are deterministic, so a cached answer is the same answer.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -22,7 +23,15 @@ from sqlalchemy.orm import Session
 from core.config import Settings, get_settings
 from services import datasets
 from services.datasets import MEASUREMENT_COLUMNS, DatasetWindow
-from services.eda import cache, decomposition, manifold, profile, reduction, report
+from services.eda import (
+    cache,
+    decomposition,
+    manifold,
+    profile,
+    reduction,
+    report,
+    visual,
+)
 from services.eda.cache import PROFILE_CACHE, DatasetVersion
 from services.quality import imputation
 
@@ -382,6 +391,189 @@ def project_tsne(
     return result, version, False
 
 
+# --- Phase 12: visual EDA (task 12.7, VIZ-6) ---------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class VisualResult:
+    """One chart's payload plus the provenance every EDA response carries."""
+
+    chart: Any
+    window: DatasetWindow
+    version: DatasetVersion
+    cached: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            **self.chart.as_dict(),
+            "cached": self.cached,
+            "dataset_version": self.version.as_dict(),
+            "window": self.window.as_dict(),
+        }
+
+
+def _visual(
+    session: Session,
+    settings: Settings | None,
+    *,
+    kind: str,
+    compute: Callable[[Any], Any],
+    params: dict[str, Any],
+    source_ids: tuple[int, ...] | None,
+    start: datetime | None,
+    end: datetime | None,
+    use_cache: bool,
+) -> VisualResult:
+    """The one path every visual chart takes from request to payload.
+
+    Shared rather than written out four times, because the order is the whole
+    point and four copies are four chances to get it wrong: **resolve the scope
+    first**, then hand the *resolved* ids to the fingerprint, the cache key,
+    the query and ``describe_window`` alike. Two dashboard endpoints once built
+    their own ``select(Observation)`` and pooled synthetic with measured rows
+    (``docs/observation-merge.md``); a chart that skipped this step would do the
+    same, and a scatter of the generator labelled as the city is exactly the
+    claim ETH-1 forbids.
+
+    The raw frame, not ``_analysis_frame``: these charts describe what was
+    observed, gaps included, and the scatter's r has to equal the profile's,
+    which is computed on the raw frame too.
+    """
+    settings = settings or get_settings()
+    source_ids = datasets.resolve_source_ids(session, source_ids, settings=settings)
+
+    version = cache.dataset_version(
+        session, source_ids=source_ids, start=start, end=end
+    )
+    key = PROFILE_CACHE.key(
+        version,
+        kind=kind,
+        source_ids=list(source_ids) if source_ids is not None else None,
+        start=start,
+        end=end,
+        **params,
+    )
+
+    if use_cache:
+        hit = PROFILE_CACHE.get(key)
+        if hit is not None:
+            chart, window = hit
+            return VisualResult(chart=chart, window=window, version=version, cached=True)
+
+    frame = datasets.load_observations(
+        session, source_ids=source_ids, start=start, end=end
+    )
+    chart = compute(frame)
+    window = datasets.describe_window(frame, tuple(source_ids or ()))
+
+    if use_cache:
+        PROFILE_CACHE.set(key, (chart, window))
+
+    return VisualResult(chart=chart, window=window, version=version, cached=False)
+
+
+def scatter_plot(
+    session: Session,
+    settings: Settings | None = None,
+    *,
+    x: str = "traffic_score",
+    y: str = "pm25",
+    color_by: str | None = None,
+    source_ids: tuple[int, ...] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    use_cache: bool = True,
+) -> VisualResult:
+    """VIZ-1: a scatter of two measurements with its OLS fit (task 12.3)."""
+    return _visual(
+        session,
+        settings,
+        kind="scatter",
+        compute=lambda frame: visual.scatter(frame, x, y, color_by=color_by),
+        params={"x": x, "y": y, "color_by": color_by},
+        source_ids=source_ids,
+        start=start,
+        end=end,
+        use_cache=use_cache,
+    )
+
+
+def grouped_summary(
+    session: Session,
+    settings: Settings | None = None,
+    *,
+    measure: str = "pm25",
+    group_by: str = "hour_of_day",
+    split_by: str | None = None,
+    source_ids: tuple[int, ...] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    use_cache: bool = True,
+) -> VisualResult:
+    """VIZ-2 and VIZ-3: grouped means with CIs, and box summaries (task 12.4)."""
+    return _visual(
+        session,
+        settings,
+        kind="grouped",
+        compute=lambda frame: visual.grouped(
+            frame, measure, group_by, split_by=split_by
+        ),
+        params={"measure": measure, "group_by": group_by, "split_by": split_by},
+        source_ids=source_ids,
+        start=start,
+        end=end,
+        use_cache=use_cache,
+    )
+
+
+def pair_plot(
+    session: Session,
+    settings: Settings | None = None,
+    *,
+    color_by: str = "pm25_band",
+    source_ids: tuple[int, ...] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    use_cache: bool = True,
+) -> VisualResult:
+    """VIZ-4: a sampled scatter matrix of every measurement (task 12.5)."""
+    return _visual(
+        session,
+        settings,
+        kind="pairplot",
+        compute=lambda frame: visual.pair_plot(frame, color_by=color_by),
+        params={"color_by": color_by},
+        source_ids=source_ids,
+        start=start,
+        end=end,
+        use_cache=use_cache,
+    )
+
+
+def andrews_curves(
+    session: Session,
+    settings: Settings | None = None,
+    *,
+    class_by: str = "time_of_day",
+    source_ids: tuple[int, ...] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    use_cache: bool = True,
+) -> VisualResult:
+    """VIZ-5: Andrews curves per class (task 12.6)."""
+    return _visual(
+        session,
+        settings,
+        kind="andrews",
+        compute=lambda frame: visual.andrews(frame, class_by=class_by),
+        params={"class_by": class_by},
+        source_ids=source_ids,
+        start=start,
+        end=end,
+        use_cache=use_cache,
+    )
+
+
 def _utc():  # noqa: ANN202 - tiny helper, kept out of the import list
     from datetime import timezone
 
@@ -391,10 +583,15 @@ def _utc():  # noqa: ANN202 - tiny helper, kept out of the import list
 __all__ = [
     "PCA_MODEL_FILENAME",
     "ProfileResult",
+    "VisualResult",
+    "andrews_curves",
     "build_profile",
     "decompose_series",
     "generate_report",
+    "grouped_summary",
+    "pair_plot",
     "persist_pca_model",
     "project_tsne",
     "reduce_dimensions",
+    "scatter_plot",
 ]

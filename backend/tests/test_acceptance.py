@@ -1,4 +1,4 @@
-"""Acceptance walkthrough — tasks 11.6, 11.7, 11.8 (specs §13, §14).
+"""Acceptance walkthrough — tasks 11.6, 11.7, 11.8, 12.12 (specs §13, §14).
 
 One test per acceptance criterion, named for it, so a run of
 
@@ -248,6 +248,10 @@ def test_ac10_every_screen_is_wired_to_real_endpoints() -> None:
         "/eda/profile",
         "/eda/reduce",
         "/eda/tsne",
+        "/eda/scatter",
+        "/eda/grouped",
+        "/eda/pairplot",
+        "/eda/andrews",
         "/ml/models",
         "/ml/predict",
     ):
@@ -265,12 +269,98 @@ def test_ac11_the_disclaimer_is_persistent(app) -> None:
     assert "Outlet" in layout  # every route renders inside this shell
 
 
+@pytest.fixture(scope="module")
+def demo_frame():
+    """The demo dataset as the quality engine leaves it, built in memory.
+
+    Generated rather than loaded, and flagged by the real detectors rather than
+    by hand, so AC-12 exercises the same data and the same anomaly flags an
+    offline install would chart — with no database to skip on.
+    """
+    from datetime import datetime, timezone
+
+    import pandas as pd
+
+    from services import demo_data
+    from services.datasets import prepare_frame
+    from services.quality import outliers
+
+    end = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    rows = [
+        {
+            "id": index,
+            "source_id": 1,
+            "timestamp": row.timestamp,
+            "lat": row.lat,
+            "lon": row.lon,
+            "pm25": row.pm25,
+            "pm10": row.pm10,
+            "temp": row.temp,
+            "humidity": row.humidity,
+            "traffic_score": row.traffic_score,
+            "is_anomaly": False,
+        }
+        for index, row in enumerate(demo_data.generate_observations(days=30, end=end))
+    ]
+    frame = prepare_frame(pd.DataFrame(rows))
+    flags, _ = outliers.detect(frame)
+    frame["is_anomaly"] = flags.reindex(frame.index, fill_value=False).astype(bool)
+    return frame
+
+
+def test_ac12_every_visual_eda_chart_builds_offline_with_n_anomalies_and_caveat(
+    demo_frame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-12 (specs §6.4, §14). Each of the five charts — scatter, grouped bars,
+    grouped boxplot, pair plot, Andrews curves — is produced from the demo
+    dataset with the network closed, reports its sample size, keeps flagged
+    readings visible, and carries the causation caveat.
+
+    Sockets are blocked rather than merely unused, so "offline" is a checked
+    property of the run and not an assumption about it (DR-1).
+    """
+    import socket
+
+    from services.eda import visual
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("AC-12 charts must not touch the network")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    flagged = int(demo_frame["is_anomaly"].sum())
+    assert flagged > 0, "the demo data should give the detectors something to flag"
+
+    scatter = visual.scatter(demo_frame, "traffic_score", "pm25")
+    grouped = visual.grouped(demo_frame, "pm25", "hour_of_day", split_by="is_weekend")
+    pairs = visual.pair_plot(demo_frame)
+    andrews = visual.andrews(demo_frame)
+
+    # n on every chart, and every bar and box (VIZ-6).
+    for result in (scatter, grouped, pairs, andrews):
+        assert result.rows_used > 0
+        assert "causation" in " ".join(result.caveats).lower()
+    assert all(bar.n > 0 for bar in grouped.bars)  # VIZ-2: grouped bars
+    assert all(box.n > 0 for box in grouped.boxes)  # VIZ-3: grouped boxplot
+    assert all(item.n > 0 for item in andrews.classes)
+
+    # Anomalies counted, and drawn rather than dropped (AC-5).
+    assert scatter.anomalies_in_rows > 0 and scatter.anomalies_in_points > 0
+    assert sum(box.anomalies_flagged for box in grouped.boxes) == grouped.anomalies_in_rows > 0
+    assert pairs.anomalies_in_points > 0
+    assert andrews.anomalies_in_rows > 0
+    assert any(any(item.is_anomaly) for item in andrews.classes)
+
+    # And the sample is admitted where one was taken.
+    assert scatter.sampled and scatter.points_returned <= visual.SCATTER_MAX_POINTS
+    assert pairs.sampled and pairs.points_returned <= visual.PAIRPLOT_MAX_POINTS
+
+
 def test_every_acceptance_criterion_has_a_test() -> None:
-    """The index, asserted. specs §14 lists eleven; a twelfth added there should
-    fail here until it is covered."""
+    """The index, asserted. specs §14 lists twelve; a thirteenth added there
+    should fail here until it is covered."""
     source = Path(__file__).read_text(encoding="utf-8")
 
-    for number in range(1, 12):
+    for number in range(1, 13):
         assert f"def test_ac{number}_" in source, f"AC-{number} has no test"
 
 
@@ -294,6 +384,8 @@ SYLLABUS = {
     "Mod 3 — Descriptive Stats & Visualization": [
         ("services.eda.profile", "univariate"),
         ("services.eda.profile", "bivariate_profile"),
+        ("services.eda.visual", "scatter"),
+        ("services.eda.visual", "grouped"),
     ],
     "Mod 4 — Dimensionality & Time-Series": [
         ("services.eda.reduction", "fit"),
@@ -303,6 +395,8 @@ SYLLABUS = {
     "Mod 5 — Advanced Visualization": [
         ("services.eda.report", "render"),
         ("services.eda.manifold", "project"),
+        ("services.eda.visual", "pair_plot"),
+        ("services.eda.visual", "andrews"),
     ],
 }
 
@@ -324,6 +418,9 @@ def test_module_five_reaches_the_frontend_too() -> None:
 
     assert "parcoords" in studio
     assert "Missingness" in studio
+    # Phase 12 (specs §6.4): the pair plot and Andrews curves.
+    assert "splom" in studio
+    assert "getAndrews" in studio
 
 
 def test_the_readme_traceability_table_matches_the_code() -> None:
@@ -350,6 +447,10 @@ def test_the_openapi_contract_is_complete(app) -> None:
         "/api/v1/data/sources",
         "/api/v1/eda/profile",
         "/api/v1/eda/reduce",
+        "/api/v1/eda/scatter",
+        "/api/v1/eda/grouped",
+        "/api/v1/eda/pairplot",
+        "/api/v1/eda/andrews",
         "/api/v1/ml/train",
         "/api/v1/ml/predict",
     ):

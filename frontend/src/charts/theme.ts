@@ -89,6 +89,52 @@ export function band(pm25: number | null | undefined): Band {
   return AQI_BANDS.find((entry) => pm25 <= entry.limit) ?? SEVERE
 }
 
+function mix(from: string, to: string, share: number): string {
+  const channel = (hex: string, offset: number) => parseInt(hex.slice(offset, offset + 2), 16)
+  return (
+    '#' +
+    [1, 3, 5]
+      .map((offset) =>
+        Math.round(channel(from, offset) + (channel(to, offset) - channel(from, offset)) * share)
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  )
+}
+
+/**
+ * Colour per group label for the Phase 12 charts (VIZ-6).
+ *
+ * - `pm25_band` takes the status palette above, so "Poor" is the same orange on
+ *   every screen; the backend's `services/eda/bands.py` holds the same edges.
+ * - Up to three groups take the categorical slots.
+ * - More than three are ordered (hours, months, weekdays, time of day), so
+ *   they take evenly spaced steps along the sequential ramp rather than a
+ *   cycled categorical palette that would give two groups the same colour.
+ *
+ * Every chart that uses this also labels its groups, so colour never carries
+ * the meaning alone.
+ */
+export function groupColors(grouping: string, categories: string[]): Record<string, string> {
+  if (grouping === 'pm25_band') {
+    return Object.fromEntries(AQI_BANDS.map((entry) => [entry.label, entry.color]))
+  }
+  if (categories.length <= CATEGORICAL.length) {
+    return Object.fromEntries(categories.map((name, index) => [name, CATEGORICAL[index] ?? INK.muted]))
+  }
+  // Skip the palest step: on the dark surface it reads as "no data".
+  const ramp = SEQUENTIAL.slice(1)
+  return Object.fromEntries(
+    categories.map((name, index) => {
+      const position = (index / Math.max(1, categories.length - 1)) * (ramp.length - 1)
+      const low = Math.floor(position)
+      const high = Math.min(ramp.length - 1, low + 1)
+      return [name, mix(ramp[low] ?? INK.muted, ramp[high] ?? INK.muted, position - low)]
+    }),
+  )
+}
+
 /** Human labels and units, matching the backend report's. */
 export const COLUMN_LABELS: Record<string, string> = {
   pm25: 'PM2.5',
